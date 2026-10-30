@@ -18,7 +18,8 @@ import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { redactDeep } from "./client.ts";
 
-export const RECORD_PATH = "/home/team/shared/execution/orders.jsonl";
+import { executionPath } from "./paths.ts";
+export const RECORD_PATH = executionPath("orders.jsonl");
 
 export const GENESIS_PREV_HASH = "0".repeat(64);
 
@@ -84,8 +85,9 @@ export async function hashRecord(fieldsWithPrevHash: Record<string, unknown>): P
 export async function readRecords(path = RECORD_PATH): Promise<ExecutionRecord[]> {
   try {
     await stat(path);
-  } catch {
-    return [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
   }
   const text = await readFile(path, "utf8");
   const out: ExecutionRecord[] = [];
@@ -94,7 +96,7 @@ export async function readRecords(path = RECORD_PATH): Promise<ExecutionRecord[]
     try {
       out.push(JSON.parse(line) as ExecutionRecord);
     } catch {
-      // A torn trailing line is ignored, never repaired.
+      throw new Error("Execution record contains malformed JSON; submissions require operator inspection");
     }
   }
   return out;

@@ -111,6 +111,7 @@ export function createClient(options: ClientOptions = {}) {
     try {
       const res = await transport(url, {
         method,
+        redirect: "error",
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs),

@@ -1,3 +1,10 @@
+# Current source update
+
+The authenticated console, operator and watcher are implemented on the integration
+branch. See [SETUP.md](SETUP.md) for current operation and limitations. The following
+is historical handoff evidence from the prior environment, not a fresh account read.
+No broker order was placed during this branch development.
+
 # Meridian execution spine — status
 
 Generated at the end of the build session. Read this before touching anything.
