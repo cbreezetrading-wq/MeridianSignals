@@ -1,0 +1,19 @@
+{
+  "_readme": [
+    "TEST CONFIG — used only by the verification scripts under /home/team/shared/execution/scripts.",
+    "Mode is approve-before-execution: every order is proposed, shown in full, and the price and",
+    "account state are re-read immediately before submission. Never automatic.",
+    "meridian-h1-v1 is enabled here ONLY so it can originate a Practice order to exercise the",
+    "connection. It is the invented ruleset that both backtests found not tradeable. Every order",
+    "it originates is recorded with origin=INVENTED_RULESET_TEST and shown as such on the dashboard."
+  ],
+  "mode": "approve-before-execution",
+  "useTestProfile": true,
+  "automaticAcknowledged": false,
+  "acknowledgedBy": null,
+  "ownerSettings": {},
+  "strategies": [
+    { "id": "meridian-h1-v1", "enabled": true },
+    { "id": "owner-method", "enabled": false }
+  ]
+}

@@ -1,0 +1,59 @@
+# Meridian Signals — repository ignore rules
+#
+# Everything below is either a build artifact, a dependency cache, a credential,
+# raw broker market data, or runtime state. None of it is source.
+
+# ------------------------------------------------------------------ dependencies / build output
+node_modules/
+dist/
+dist-ssr/
+.tanstack/
+.nitro/
+.output/
+.vercel/
+.run/
+*.log
+
+# ------------------------------------------------------------------ credentials
+# Never commit any of these. The OANDA token is supplied at runtime as the
+# environment variable OANDA; the account id is supplied by the broker response.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+
+# ------------------------------------------------------------------ raw historical price caches
+# ~57 MB of H1 bars and ~3 MB of daily bars, fetched from the owner's own OANDA
+# account under personal-use terms. Re-fetchable with fetch_history.ts /
+# fetch_daily.ts; not ours to redistribute, so not in the repo.
+backtest/data/
+daily/data/
+
+# ------------------------------------------------------------------ runtime state
+# Append-only execution/signal records. Runtime state, regenerated as the system
+# runs. The signal log contains no credentials but is the owner's trade history.
+signal-log/signals.jsonl
+execution/orders.jsonl
+execution/status.json
+execution/pause.json
+execution/day-state.json
+
+# ------------------------------------------------------------------ highest-risk file
+# execution/scripts/08-status.ts copies the live broker read (account balance,
+# NAV, open orders, open positions and the broker's own order/trade ids) into
+# site/src/lib/executionStatus.json. It is generated runtime state sitting in a
+# source tree, and it carries account-level detail. It is NOT committed; the
+# dashboard never imports it, so the app builds and renders without it.
+site/src/lib/executionStatus.json
+
+# ------------------------------------------------------------------ evidence / verification logs
+# Contain the account id and broker order and trade ids.
+verify/
+
+# ------------------------------------------------------------------ editor / OS
+.DS_Store
+*.swp

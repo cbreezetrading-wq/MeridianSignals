@@ -1,0 +1,21 @@
+{
+  "_readme": [
+    "Meridian execution config. Default is signals-only: signals are displayed, nothing is submitted.",
+    "The credential comes from process.env.OANDA. It is never read from this file.",
+    "Every setting below is either OWNER (the owner supplied it) or TEST (a labelled test value).",
+    "The TEST profile is used only when useTestProfile is true, and every value it supplies is",
+    "labelled TEST in the execution record and on the dashboard. The owner overrides any of them",
+    "by adding the same key under ownerSettings, which takes precedence and is labelled OWNER.",
+    "There is no setting here that can change the trading host: the host is a frozen constant in",
+    "lib/interlock.ts and the order path asserts it on every request."
+  ],
+  "mode": "signals-only",
+  "useTestProfile": true,
+  "automaticAcknowledged": false,
+  "acknowledgedBy": null,
+  "ownerSettings": {},
+  "strategies": [
+    { "id": "meridian-h1-v1", "enabled": false },
+    { "id": "owner-method", "enabled": false }
+  ]
+}

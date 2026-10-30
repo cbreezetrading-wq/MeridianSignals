@@ -1,0 +1,1042 @@
+/**
+ * The execution engine: the order path.
+ *
+ * Order of checks on every signal, in this order and no other:
+ *
+ *   1. settings     — every required setting must be set, else refuse naming it
+ *   2. mode         — signals-only submits nothing, ever
+ *   3. strategy     — no enabled strategy ⇒ NO_ELIGIBLE_STRATEGY, submit nothing
+ *   4. instruction  — complete and unexpired, else refuse naming the field
+ *   5. pause        — a pause blocks new entries (and nothing else)
+ *   6. duplicate    — stable key, checked against the record AND the broker
+ *   7. pre-flight   — price and account state re-fetched immediately before submit
+ *   8. guards       — spread, entry deviation, trading hours, max positions, daily loss
+ *   9. sizing       — units from stop distance, equity, account currency
+ *  10. submit       — protection attached IN THE SAME REQUEST
+ *  11. confirm      — read the trade back from the broker; PROTECTED only when the
+ *                     broker's own object shows the stop
+ */
+
+import { createClient, type Client, type BrokerResponse, type BrokerFailure } from "./client.ts";
+import { createHash } from "node:crypto";
+import { PRACTICE_HOST, assertPracticeTarget, interlockStatement } from "./interlock.ts";
+import { appendRecord, replay } from "./record.ts";
+import {
+  loadConfigFromDisk,
+  type ExecutionConfig,
+  type ResolvedSettings,
+  resolveSettings,
+  TEST_PROFILE,
+} from "./config.ts";
+import {
+  validateInstruction,
+  sizePosition,
+  formatPrice,
+  pipSize,
+  type SignalInstruction,
+  type InstrumentMeta,
+  type Quote,
+} from "./instruction.ts";
+
+export const MERIDIAN_TAG = "MERIDIAN-PRACTICE-TEST";
+export const MANAGED_ID_PREFIX = "msig-";
+
+export type EngineState =
+  | "SIGNALS_ONLY"
+  | "NO_ELIGIBLE_STRATEGY"
+  | "REFUSED_SETTINGS"
+  | "REFUSED_INSTRUCTION"
+  | "PAUSED"
+  | "DUPLICATE_SUPPRESSED"
+  | "REFUSED_GUARD"
+  | "REQUESTED"
+  | "ACKNOWLEDGED"
+  | "FILLED"
+  | "PARTIALLY_FILLED"
+  | "PROTECTED"
+  | "REJECTED"
+  | "CANCELLED"
+  | "CLOSED"
+  | "UNAVAILABLE";
+
+export type Outcome = {
+  state: EngineState;
+  ok: boolean;
+  signalId: string | null;
+  orderKey: string | null;
+  reasons: string[];
+  detail: Record<string, unknown>;
+};
+
+/* ------------------------------------------------------------------ helpers */
+
+export function idempotencyKey(instruction: Pick<SignalInstruction, "signalId" | "strategyId" | "strategyVersion" | "instrument" | "direction">): string {
+  const material = [instruction.signalId, instruction.strategyId, instruction.strategyVersion, instruction.instrument, instruction.direction].join("|");
+  return `${MANAGED_ID_PREFIX}${sha256(material).slice(0, 24)}`;
+}
+
+function sha256(s: string): string {
+  return createHash("sha256").update(s, "utf8").digest("hex");
+}
+
+function isTransportFailure(r: BrokerResponse | BrokerFailure): r is BrokerFailure {
+  return (r as BrokerFailure).transportFailure === true;
+}
+
+/**
+ * Is this broker object Meridian's?
+ *
+ * Measured, not assumed: OANDA does NOT copy an order's clientExtensions onto the
+ * trade that order opens — the trade comes back with clientExtensions: null. What it
+ * DOES carry is the clientExtensions of the protective orders attached at entry, so
+ * the stop (-sl) and take-profit (-tp) legs are the reliable marker for a trade.
+ * Orders carry their own tag directly.
+ *
+ * A trade whose protective orders have been removed therefore loses its broker-side
+ * marker. That is not hypothetical: it happened during verification. So identity also
+ * comes from the append-only record — `knownTradeIds` is the set of trade ids Meridian
+ * recorded opening. A trade is Meridian's if EITHER marker says so.
+ */
+export function isManaged(
+  entity: { clientExtensions?: { id?: string; tag?: string }; stopLossOrder?: any; takeProfitOrder?: any; id?: string } | undefined,
+  knownTradeIds?: Set<string>,
+): boolean {
+  if (!entity) return false;
+  const direct = entity.clientExtensions;
+  if (direct?.tag === MERIDIAN_TAG && typeof direct.id === "string" && direct.id.startsWith(MANAGED_ID_PREFIX)) return true;
+  for (const leg of [entity.stopLossOrder, entity.takeProfitOrder]) {
+    const ce = leg?.clientExtensions;
+    if (ce?.tag === MERIDIAN_TAG && typeof ce.id === "string" && ce.id.startsWith(MANAGED_ID_PREFIX)) return true;
+  }
+  if (knownTradeIds && entity.id !== undefined && knownTradeIds.has(String(entity.id))) return true;
+  return false;
+}
+
+/** Trade ids Meridian recorded opening, from the append-only record. */
+export async function managedTradeIdsFromRecord(): Promise<Set<string>> {
+  const { all } = await replay();
+  const ids = new Set<string>();
+  for (const r of all) {
+    if (r.kind !== "FILL" && r.kind !== "PARTIAL_FILL") continue;
+    const p = (r.payload ?? {}) as any;
+    const id = p.tradeId ?? p.tradeOpened?.tradeID;
+    if (id !== undefined && id !== null) ids.add(String(id));
+  }
+  return ids;
+}
+
+function managedTagged(entity: { clientExtensions?: { tag?: string }; stopLossOrder?: any; takeProfitOrder?: any } | undefined): boolean {
+  return isManaged(entity);
+}
+
+export async function loadConfig(path?: string): Promise<ExecutionConfig> {
+  return loadConfigFromDisk(path);
+}
+
+/* ---------------------------------------------------------------- attestation */
+
+export type Attestation = {
+  ok: boolean;
+  practiceHost: string;
+  practiceProbe: { status: number; ok: boolean; accountsSeen: number };
+  liveProbe: { host: string; status: number; refused: boolean; errorMessage: string | null };
+  statement: ReturnType<typeof interlockStatement>;
+  checkedAt: string;
+};
+
+/**
+ * Ask the LIVE host the same question with the same token, and require it to refuse.
+ *
+ * The live probe deliberately does NOT go through the client (which would refuse the
+ * host). It uses a bare fetch to a hard-coded live URL for one GET /v3/accounts, the
+ * cheapest possible read, with the token in a header. No order can be built against
+ * that host: the client has no code path that will accept it.
+ *
+ * If the live host ever answers 200, this token can move real money and the engine
+ * fails closed — `ok` is false and every submit refuses.
+ */
+export async function attest(client: Client): Promise<Attestation> {
+  const practiceRes = await client.accounts();
+  let practiceProbe = { status: 0, ok: false, accountsSeen: 0 };
+  if (!isTransportFailure(practiceRes)) {
+    practiceProbe = {
+      status: practiceRes.status,
+      ok: practiceRes.ok,
+      accountsSeen: Array.isArray(practiceRes.body?.accounts) ? practiceRes.body.accounts.length : 0,
+    };
+  }
+
+  const liveHost = "https://api-fxtrade.oanda.com/v3/accounts";
+  let liveProbe: Attestation["liveProbe"] = { host: liveHost, status: 0, refused: false, errorMessage: null };
+  try {
+    const res = await fetch(liveHost, {
+      headers: { Authorization: `Bearer ${(process.env.OANDA ?? "").trim()}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const text = await res.text();
+    let msg: string | null = null;
+    try {
+      msg = (JSON.parse(text) as { errorMessage?: string }).errorMessage ?? null;
+    } catch {
+      msg = text.slice(0, 200);
+    }
+    liveProbe = { host: liveHost, status: res.status, refused: res.status === 401 || res.status === 403, errorMessage: msg };
+  } catch (error) {
+    liveProbe = {
+      host: liveHost,
+      status: 0,
+      refused: true, // unreachable is also "cannot trade live"
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const ok = practiceProbe.ok && liveProbe.refused;
+  const attestation: Attestation = {
+    ok,
+    practiceHost: PRACTICE_HOST,
+    practiceProbe,
+    liveProbe,
+    statement: interlockStatement(),
+    checkedAt: new Date().toISOString(),
+  };
+  await appendRecord({
+    kind: "INTERLOCK_ATTEST",
+    state: ok ? "PASSED" : "FAILED_CLOSED",
+    payload: attestation,
+  });
+  return attestation;
+}
+
+/* -------------------------------------------------------------- account read */
+
+export type AccountSnapshot = {
+  id: string;
+  currency: string;
+  balance: number;
+  nav: number;
+  marginAvailable: number;
+  marginUsed: number;
+  openPositionCount: number;
+  openTradeCount: number;
+  pendingOrderCount: number;
+  unrealizedPL: number;
+  lastTransactionID: string;
+  readAt: string;
+};
+
+export async function readAccount(client: Client): Promise<{ ok: true; account: AccountSnapshot } | { ok: false; reason: string; detail: unknown }> {
+  const res = await client.summary();
+  if (isTransportFailure(res)) return { ok: false, reason: "ACCOUNT_READ_FAILED", detail: res.error };
+  if (!res.ok) return { ok: false, reason: "ACCOUNT_READ_FAILED", detail: { status: res.status, text: res.text } };
+  const a = res.body.account;
+  const account: AccountSnapshot = {
+    id: a.id,
+    currency: a.currency,
+    balance: Number(a.balance),
+    nav: Number(a.NAV),
+    marginAvailable: Number(a.marginAvailable),
+    marginUsed: Number(a.marginUsed),
+    openPositionCount: Number(a.openPositionCount),
+    openTradeCount: Number(a.openTradeCount),
+    pendingOrderCount: Number(a.pendingOrderCount),
+    unrealizedPL: Number(a.unrealizedPL),
+    lastTransactionID: String(a.lastTransactionID),
+    readAt: new Date().toISOString(),
+  };
+  await appendRecord({ kind: "ACCOUNT_READ", state: "OK", payload: account });
+  return { ok: true, account };
+}
+
+export async function readInstruments(client: Client): Promise<Record<string, InstrumentMeta>> {
+  const res = await client.instruments();
+  if (isTransportFailure(res) || !res.ok) return {};
+  const out: Record<string, InstrumentMeta> = {};
+  for (const i of res.body.instruments ?? []) {
+    out[i.name] = {
+      name: i.name,
+      displayPrecision: i.displayPrecision,
+      tradeUnitsPrecision: i.tradeUnitsPrecision,
+      minimumTradeSize: i.minimumTradeSize,
+      maximumOrderUnits: i.maximumOrderUnits,
+      marginRate: i.marginRate,
+    };
+  }
+  return out;
+}
+
+export async function readQuotes(client: Client, instruments: string[]): Promise<Record<string, Quote>> {
+  if (instruments.length === 0) return {};
+  const res = await client.pricing(instruments);
+  if (isTransportFailure(res) || !res.ok) return {};
+  const out: Record<string, Quote> = {};
+  for (const p of res.body.prices ?? []) {
+    const bid = Number(p.bids?.[0]?.price);
+    const ask = Number(p.asks?.[0]?.price);
+    out[p.instrument] = {
+      instrument: p.instrument,
+      bid,
+      ask,
+      mid: (bid + ask) / 2,
+      tradeable: p.tradeable === true,
+      time: p.time,
+      spreadPips: (ask - bid) / pipSize(p.instrument),
+    };
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------- pause */
+
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+
+export const PAUSE_PATH = "/home/team/shared/execution/pause.json";
+
+export async function readPause(): Promise<{ paused: boolean; reason: string | null; setAt: string | null }> {
+  try {
+    const raw = JSON.parse(await readFile(PAUSE_PATH, "utf8"));
+    return { paused: raw.paused === true, reason: raw.reason ?? null, setAt: raw.setAt ?? null };
+  } catch {
+    return { paused: false, reason: null, setAt: null };
+  }
+}
+
+export async function writePause(paused: boolean, reason: string | null): Promise<void> {
+  await mkdir("/home/team/shared/execution", { recursive: true });
+  await writeFile(PAUSE_PATH, JSON.stringify({ paused, reason, setAt: new Date().toISOString() }, null, 2), "utf8");
+}
+
+/* -------------------------------------------------------------- daily state */
+
+export const DAY_STATE_PATH = "/home/team/shared/execution/day-state.json";
+
+export async function dayStartNav(nav: number): Promise<{ date: string; nav: number }> {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const raw = JSON.parse(await readFile(DAY_STATE_PATH, "utf8"));
+    if (raw.date === today && Number.isFinite(raw.nav)) return { date: today, nav: raw.nav };
+  } catch {
+    /* fall through */
+  }
+  await mkdir("/home/team/shared/execution", { recursive: true });
+  await writeFile(DAY_STATE_PATH, JSON.stringify({ date: today, nav }, null, 2), "utf8");
+  return { date: today, nav };
+}
+
+/* ------------------------------------------------------------------ evaluate */
+
+export type Evaluation = {
+  ok: boolean;
+  state: EngineState;
+  reasons: string[];
+  instruction: SignalInstruction;
+  orderKey: string;
+  proposal: Record<string, unknown> | null;
+  orderPayload: Record<string, unknown> | null;
+};
+
+/**
+ * Everything up to (but excluding) the network write. Re-reads price and account
+ * state itself, so it is safe to call immediately before submission.
+ */
+export async function evaluate(
+  client: Client,
+  instruction: SignalInstruction,
+  config: ExecutionConfig,
+  settings: ResolvedSettings,
+): Promise<Evaluation> {
+  const orderKey = idempotencyKey(instruction);
+  const reasons: string[] = [];
+  const base = { instruction, orderKey };
+
+  // 1. settings
+  if (!settings.allSet) {
+    reasons.push(`missing required settings: ${settings.missing.join(", ")}`);
+    await appendRecord({
+      kind: "VALIDATION_REFUSED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "REFUSED_SETTINGS",
+      payload: { reasons, missingSettings: settings.missing, mode: settings.mode },
+    });
+    return { ...base, ok: false, state: "REFUSED_SETTINGS", reasons, proposal: null, orderPayload: null };
+  }
+
+  // 2. mode
+  if (settings.mode === "signals-only") {
+    reasons.push("mode is signals-only: signals are displayed, nothing is submitted");
+    await appendRecord({
+      kind: "SIGNALS_ONLY",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "SIGNALS_ONLY",
+      payload: { reasons, mode: settings.mode, modeSource: settings.modeSource },
+    });
+    return { ...base, ok: false, state: "SIGNALS_ONLY", reasons, proposal: null, orderPayload: null };
+  }
+
+  // 3. strategy eligibility
+  const strategy = config.strategies.find((s) => s.id === instruction.strategyId && s.version === instruction.strategyVersion);
+  const anyEnabled = config.strategies.some((s) => s.enabled);
+  if (!anyEnabled) {
+    reasons.push("NO_ELIGIBLE_STRATEGY: no strategy is enabled, so nothing is submitted");
+    await appendRecord({
+      kind: "NO_ELIGIBLE_STRATEGY",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "NO_ELIGIBLE_STRATEGY",
+      payload: { reasons, strategies: config.strategies.map((s) => ({ id: s.id, version: s.version, enabled: s.enabled })) },
+    });
+    return { ...base, ok: false, state: "NO_ELIGIBLE_STRATEGY", reasons, proposal: null, orderPayload: null };
+  }
+  if (!strategy) {
+    reasons.push(`NO_ELIGIBLE_STRATEGY: strategy ${instruction.strategyId}@${instruction.strategyVersion} is not a known strategy`);
+    await appendRecord({
+      kind: "NO_ELIGIBLE_STRATEGY",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "NO_ELIGIBLE_STRATEGY",
+      payload: { reasons },
+    });
+    return { ...base, ok: false, state: "NO_ELIGIBLE_STRATEGY", reasons, proposal: null, orderPayload: null };
+  }
+  if (!strategy.enabled) {
+    reasons.push(`NO_ELIGIBLE_STRATEGY: strategy ${strategy.id} is disabled (${strategy.note})`);
+    await appendRecord({
+      kind: "NO_ELIGIBLE_STRATEGY",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "NO_ELIGIBLE_STRATEGY",
+      payload: { reasons },
+    });
+    return { ...base, ok: false, state: "NO_ELIGIBLE_STRATEGY", reasons, proposal: null, orderPayload: null };
+  }
+
+  // 4. instruction completeness
+  const validation = validateInstruction(instruction);
+  if (!validation.ok) {
+    reasons.push(...validation.issues.map((i) => `${i.field}: ${i.reason}`));
+    await appendRecord({
+      kind: "VALIDATION_REFUSED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "REFUSED_INSTRUCTION",
+      payload: { issues: validation.issues },
+    });
+    return { ...base, ok: false, state: "REFUSED_INSTRUCTION", reasons, proposal: null, orderPayload: null };
+  }
+
+  // 5. pause
+  const pause = await readPause();
+  if (pause.paused) {
+    reasons.push(`PAUSED: new entries are paused (${pause.reason ?? "no reason given"}) since ${pause.setAt ?? "unknown"}; protective stops are untouched`);
+    await appendRecord({
+      kind: "VALIDATION_REFUSED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "PAUSED",
+      payload: { reasons, pause },
+    });
+    return { ...base, ok: false, state: "PAUSED", reasons, proposal: null, orderPayload: null };
+  }
+
+  // 7. pre-flight reads — fresh price and account state, every time.
+  const accountRes = await readAccount(client);
+  if (!accountRes.ok) {
+    reasons.push(`UNAVAILABLE: could not read account state (${JSON.stringify(accountRes.detail)})`);
+    return { ...base, ok: false, state: "UNAVAILABLE", reasons, proposal: null, orderPayload: null };
+  }
+  const account = accountRes.account;
+  const allowed = settings.values.allowedInstruments.value as string[];
+  const meta = await readInstruments(client);
+  const quoteCcy = instruction.instrument.split("_")[1] ?? "";
+  // Conversion pairs are only requested when the quote currency is not the account
+  // currency. Asking for a nonsense pair such as USD_USD makes OANDA reject the whole
+  // pricing request, which would look like "no price" for the instrument we care about.
+  const conversionPairs = quoteCcy === account.currency ? [] : [`${account.currency}_${quoteCcy}`, `${quoteCcy}_${account.currency}`];
+  const quotes = await readQuotes(client, [...new Set([instruction.instrument, ...conversionPairs])]);
+  const quote = quotes[instruction.instrument];
+
+  if (!quote || !Number.isFinite(quote.mid) || quote.mid <= 0) {
+    reasons.push(`UNAVAILABLE: no price for ${instruction.instrument}`);
+    return { ...base, ok: false, state: "UNAVAILABLE", reasons, proposal: null, orderPayload: null };
+  }
+
+  // 8. guards
+  const maxSpread = Number(settings.values.maxSpreadPips.value);
+  const maxDeviation = Number(settings.values.maxEntryDeviationPips.value);
+  const maxPositions = Number(settings.values.maxPositions.value);
+  const maxExposurePct = Number(settings.values.maxCombinedExposurePct.value);
+  const riskPct = Number(settings.values.riskPerTradePct.value);
+  const times = settings.values.allowedTradingTimes.value as { days: string[]; fromUtc: string; toUtc: string };
+
+  if (!allowed.includes(instruction.instrument)) {
+    reasons.push(`GUARD_INSTRUMENT: ${instruction.instrument} is not in allowedInstruments (${allowed.join(", ")})`);
+  }
+  if (!quote.tradeable) reasons.push(`GUARD_NOT_TRADEABLE: OANDA reports ${instruction.instrument} as not tradeable right now`);
+  if (quote.spreadPips > maxSpread) {
+    reasons.push(`GUARD_SPREAD: spread ${quote.spreadPips.toFixed(2)} pips exceeds maxSpreadPips ${maxSpread}`);
+  }
+  const deviationPips = Math.abs(quote.mid - instruction.sourceBar.close) / pipSize(instruction.instrument);
+  if (deviationPips > maxDeviation) {
+    reasons.push(
+      `GUARD_ENTRY_DEVIATION: price has moved ${deviationPips.toFixed(2)} pips from the signal bar close ${instruction.sourceBar.close}, beyond maxEntryDeviationPips ${maxDeviation}`,
+    );
+  }
+  const now = new Date();
+  const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][now.getUTCDay()];
+  const hhmm = `${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}`;
+  if (!times.days.includes(dayName) || hhmm < times.fromUtc || hhmm > times.toUtc) {
+    reasons.push(`GUARD_TRADING_TIME: ${dayName} ${hhmm} UTC is outside allowedTradingTimes ${times.days.join("/")} ${times.fromUtc}-${times.toUtc}`);
+  }
+
+  const openTradesRes = await client.openTrades();
+  const openTrades: any[] = !isTransportFailure(openTradesRes) && openTradesRes.ok ? (openTradesRes.body.trades ?? []) : [];
+  const knownTradeIds = await managedTradeIdsFromRecord();
+  const managedOpen = openTrades.filter((t) => isManaged(t, knownTradeIds));
+  if (managedOpen.length >= maxPositions) {
+    reasons.push(`GUARD_MAX_POSITIONS: ${managedOpen.length} Meridian-managed position(s) open, maxPositions is ${maxPositions}`);
+  }
+  if (managedOpen.some((t) => t.instrument === instruction.instrument)) {
+    reasons.push(`GUARD_EXISTING_POSITION: a Meridian-managed position in ${instruction.instrument} is already open; existingPositionRule="${instruction.existingPositionRule}"`);
+  }
+
+  const day = await dayStartNav(account.nav);
+  const realised = await realisedToday();
+  const unrealisedManaged = managedOpen.reduce((sum, t) => sum + Number(t.unrealizedPL ?? 0), 0);
+  const dayPnl = realised + unrealisedManaged;
+  const threshold = (day.nav * Number(settings.values.dailyLossThresholdPct.value)) / 100;
+  if (dayPnl <= -threshold) {
+    reasons.push(`GUARD_DAILY_LOSS: day P/L ${dayPnl.toFixed(2)} ${account.currency} has reached the daily threshold -${threshold.toFixed(2)} (${String(settings.values.dailyLossThresholdPct.value)}% of opening NAV ${day.nav.toFixed(2)})`);
+  }
+
+  // 9. sizing
+  const instrumentMeta = meta[instruction.instrument];
+  if (!instrumentMeta) {
+    reasons.push(`UNAVAILABLE: OANDA returned no instrument metadata for ${instruction.instrument}, so minimum size and precision are unknown`);
+  }
+  let sizing = null as ReturnType<typeof sizePosition> | null;
+  if (instrumentMeta) {
+    sizing = sizePosition({
+      instrument: instruction.instrument,
+      direction: instruction.direction,
+      entryPrice: quote.mid,
+      stopPrice: instruction.stopPrice,
+      nav: account.nav,
+      accountCurrency: account.currency,
+      meta: instrumentMeta,
+      riskPerTradePct: riskPct,
+      quotes,
+    });
+    if (!sizing.ok) reasons.push(`SIZING_${sizing.reason}: ${sizing.detail}`);
+  }
+
+  if (reasons.length > 0 || !sizing || !sizing.ok || !instrumentMeta) {
+    await appendRecord({
+      kind: "VALIDATION_REFUSED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "REFUSED_GUARD",
+      payload: { reasons, price: quote, account },
+    });
+    return { ...base, ok: false, state: "REFUSED_GUARD", reasons, proposal: null, orderPayload: null };
+  }
+
+  const exposureCap = (account.nav * maxExposurePct) / 100;
+  const existingExposure = managedOpen.reduce((sum, t) => sum + Math.abs(Number(t.currentUnits ?? 0)) * Number(t.price ?? 0), 0);
+  if (existingExposure + sizing.notionalAccountCurrency > exposureCap) {
+    reasons.push(
+      `GUARD_EXPOSURE: adding ${sizing.notionalAccountCurrency.toFixed(2)} ${account.currency} notional to existing ${existingExposure.toFixed(2)} would exceed maxCombinedExposure ${exposureCap.toFixed(2)} (${maxExposurePct}% of NAV)`,
+    );
+    await appendRecord({
+      kind: "VALIDATION_REFUSED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "REFUSED_GUARD",
+      payload: { reasons, sizing, account },
+    });
+    return { ...base, ok: false, state: "REFUSED_GUARD", reasons, proposal: null, orderPayload: null };
+  }
+
+  // 10. the order, with protection attached in the same request object.
+  const orderPayload = buildOrderPayload(instruction, sizing.signedUnits, instrumentMeta, orderKey);
+  const proposal = {
+    mode: settings.mode,
+    modeSource: settings.modeSource,
+    testProfile: settings.testProfileInUse,
+    origin: instruction.origin,
+    strategy: { id: strategy.id, version: strategy.version, label: strategy.label, enabled: strategy.enabled, note: strategy.note },
+    instrument: instruction.instrument,
+    direction: instruction.direction,
+    units: sizing.units,
+    signedUnits: sizing.signedUnits,
+    entryPriceReference: quote.mid,
+    bid: quote.bid,
+    ask: quote.ask,
+    spreadPips: Number(quote.spreadPips.toFixed(2)),
+    stopPrice: instruction.stopPrice,
+    takeProfitPrice: instruction.takeProfitPrice,
+    stopDistancePips: Number((sizing.riskPerUnitQuote / pipSize(instruction.instrument)).toFixed(1)),
+    riskAccountCurrency: Number(sizing.riskAccountCurrency.toFixed(2)),
+    riskPctOfNav: Number(sizing.riskPctOfNav.toFixed(4)),
+    riskPctSetting: riskPct,
+    riskSettingSource: settings.values.riskPerTradePct.source,
+    notionalAccountCurrency: Number(sizing.notionalAccountCurrency.toFixed(2)),
+    accountCurrency: account.currency,
+    equity: account.nav,
+    marginAvailable: account.marginAvailable,
+    conversion: sizing.conversion,
+    rounding: sizing.rounding,
+    priceReadAt: quote.time,
+    accountReadAt: account.readAt,
+    idempotencyKey: orderKey,
+    attachedProtection: {
+      stopLossOnFill: orderPayload.order.stopLossOnFill,
+      takeProfitOnFill: orderPayload.order.takeProfitOnFill,
+      note: "attached in the same POST /v3/accounts/{id}/orders request as the entry — there is no follow-up call that could be lost",
+    },
+    orderPayload,
+  };
+
+  return { ...base, ok: true, state: "REQUESTED", reasons: [], proposal, orderPayload };
+}
+
+/**
+ * Build the v20 order body. Called only from evaluate(), and it re-asserts the
+ * practice target as its very last act before returning, so a caller cannot obtain a
+ * submittable payload without the interlock having run.
+ */
+export function buildOrderPayload(
+  instruction: SignalInstruction,
+  signedUnits: number,
+  meta: InstrumentMeta,
+  orderKey: string,
+): any {
+  const payload = {
+    order: {
+      type: "MARKET",
+      instrument: instruction.instrument,
+      units: String(signedUnits),
+      timeInForce: "FOK",
+      positionFill: "DEFAULT",
+      clientExtensions: {
+        id: orderKey,
+        tag: MERIDIAN_TAG,
+        comment: `${instruction.origin} ${instruction.strategyId}@${instruction.strategyVersion} signal ${instruction.signalId}`.slice(0, 120),
+      },
+      stopLossOnFill: {
+        price: formatPrice(instruction.stopPrice, meta.displayPrecision),
+        timeInForce: "GTC",
+        clientExtensions: { id: `${orderKey}-sl`, tag: MERIDIAN_TAG, comment: "attached at entry" },
+      },
+      takeProfitOnFill: {
+        price: formatPrice(instruction.takeProfitPrice, meta.displayPrecision),
+        timeInForce: "GTC",
+        clientExtensions: { id: `${orderKey}-tp`, tag: MERIDIAN_TAG, comment: "attached at entry" },
+      },
+    },
+  };
+  // The interlock's last line of defence: no payload exists unless the target is the
+  // practice host. (The URL is rebuilt from the frozen constant by the client too.)
+  assertPracticeTarget(`https://${PRACTICE_HOST}/v3/accounts/x/orders`);
+  return payload;
+}
+
+/* --------------------------------------------------------------- duplicates */
+
+export type DuplicateCheck = {
+  duplicate: boolean;
+  foundIn: "RECORD" | "BROKER_ORDER" | "BROKER_TRADE" | null;
+  evidence: unknown;
+};
+
+/**
+ * Duplicate prevention, in two independent places:
+ *  - the append-only record (works even if the broker has forgotten the order);
+ *  - the broker itself (works even if the record is lost).
+ * Either one finding the key means no second order is sent.
+ */
+export async function checkDuplicate(client: Client, orderKey: string, signalId: string): Promise<DuplicateCheck> {
+  const { byOrderKey } = await replay();
+  const existing = byOrderKey.get(orderKey) ?? [];
+  const submitted = existing.filter((r) =>
+    ["ORDER_REQUESTED", "ORDER_ACKNOWLEDGED", "FILL", "PARTIAL_FILL", "PROTECTED"].includes(r.kind),
+  );
+  if (submitted.length > 0) {
+    return { duplicate: true, foundIn: "RECORD", evidence: submitted.map((r) => ({ seq: r.seq, kind: r.kind, state: r.state, recordedAt: r.recordedAt })) };
+  }
+
+  const ordersRes = await client.orders("ALL");
+  if (!isTransportFailure(ordersRes) && ordersRes.ok) {
+    const hit = (ordersRes.body.orders ?? []).find((o: any) => o.clientExtensions?.id === orderKey);
+    if (hit) return { duplicate: true, foundIn: "BROKER_ORDER", evidence: { id: hit.id, state: hit.state, type: hit.type, clientExtensions: hit.clientExtensions } };
+  }
+  const tradesRes = await client.openTrades();
+  if (!isTransportFailure(tradesRes) && tradesRes.ok) {
+    const hit = (tradesRes.body.trades ?? []).find(
+      (t: any) =>
+        isManaged(t) &&
+        [t.stopLossOrder?.clientExtensions?.id, t.takeProfitOrder?.clientExtensions?.id, t.clientExtensions?.id].some(
+          (id: unknown) => typeof id === "string" && (id === orderKey || id.startsWith(orderKey)),
+        ),
+    );
+    if (hit) return { duplicate: true, foundIn: "BROKER_TRADE", evidence: { id: hit.id, instrument: hit.instrument, currentUnits: hit.currentUnits, stopLossOrder: hit.stopLossOrder?.clientExtensions ?? null } };
+  }
+  return { duplicate: false, foundIn: null, evidence: null };
+}
+
+/* ------------------------------------------------------------------ submit */
+
+export type SubmitResult = {
+  state: EngineState;
+  ok: boolean;
+  orderKey: string;
+  signalId: string;
+  reasons: string[];
+  proposal: Record<string, unknown> | null;
+  broker: {
+    orderId: string | null;
+    tradeId: string | null;
+    transactionId: string | null;
+    ackStatus: number;
+    ackJson: unknown;
+    errorMessage: string | null;
+  } | null;
+  timing: { requestedAt: string; acknowledgedAt: string; roundTripMs: number; instructionToAckMs: number } | null;
+  protection: unknown;
+};
+
+export async function submitSignal(
+  client: Client,
+  instruction: SignalInstruction,
+  config: ExecutionConfig,
+  opts: { settings?: ResolvedSettings } = {},
+): Promise<SubmitResult> {
+  const settings = opts.settings ?? resolveSettings(config);
+  const orderKey = idempotencyKey(instruction);
+
+  await appendRecord({
+    kind: "INSTRUCTION_RECEIVED",
+    signalId: instruction.signalId,
+    strategyId: instruction.strategyId,
+    strategyVersion: instruction.strategyVersion,
+    orderKey,
+    state: "RECEIVED",
+    payload: { instruction, origin: instruction.origin, mode: settings.mode },
+  });
+
+  // Duplicate check BEFORE anything else that could refuse the signal.
+  //
+  // "Have I already submitted this signal?" is a property of the signal, not of the
+  // account state. Checking it after the position/guard checks would let an unrelated
+  // guard (max positions, daily loss) answer first and mask the real reason a
+  // resubmission must do nothing — which is exactly what happened in the first pass of
+  // this verification. It is checked again immediately before the POST as well.
+  const earlyDup = await checkDuplicate(client, orderKey, instruction.signalId);
+  if (earlyDup.duplicate) {
+    const reasons = [`duplicate suppressed: key ${orderKey} already exists (found in ${earlyDup.foundIn})`];
+    await appendRecord({
+      kind: "DUPLICATE_SUPPRESSED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "DUPLICATE_SUPPRESSED",
+      payload: { reasons, foundIn: earlyDup.foundIn, evidence: earlyDup.evidence, stage: "pre-evaluation" },
+    });
+    return {
+      state: "DUPLICATE_SUPPRESSED",
+      ok: false,
+      orderKey,
+      signalId: instruction.signalId,
+      reasons,
+      proposal: null,
+      broker: null,
+      timing: null,
+      protection: null,
+    };
+  }
+
+  const evaluation = await evaluate(client, instruction, config, settings);
+  if (!evaluation.ok) {
+    return {
+      state: evaluation.state,
+      ok: false,
+      orderKey,
+      signalId: instruction.signalId,
+      reasons: evaluation.reasons,
+      proposal: null,
+      broker: null,
+      timing: null,
+      protection: null,
+    };
+  }
+
+  // 6. duplicate check, immediately before the write.
+  const dup = await checkDuplicate(client, orderKey, instruction.signalId);
+  if (dup.duplicate) {
+    const reasons = [`duplicate suppressed: key ${orderKey} already exists (found in ${dup.foundIn})`];
+    await appendRecord({
+      kind: "DUPLICATE_SUPPRESSED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "DUPLICATE_SUPPRESSED",
+      payload: { reasons, foundIn: dup.foundIn, evidence: dup.evidence },
+    });
+    return {
+      state: "DUPLICATE_SUPPRESSED",
+      ok: false,
+      orderKey,
+      signalId: instruction.signalId,
+      reasons,
+      proposal: evaluation.proposal,
+      broker: null,
+      timing: null,
+      protection: null,
+    };
+  }
+
+  // Submit. Timing is measured around the write only.
+  const requestedAt = new Date().toISOString();
+  const t0 = Date.now();
+  const res = await client.createOrder(evaluation.orderPayload);
+  const roundTripMs = Date.now() - t0;
+  const acknowledgedAt = new Date().toISOString();
+  const instructionToAckMs = Date.parse(acknowledgedAt) - Date.parse(instruction.generatedAt);
+
+  if (isTransportFailure(res)) {
+    // The connection failed. We do NOT retry here: the caller must first read broker
+    // state. Record the failure so the record shows the gap.
+    await appendRecord({
+      kind: "CONNECTION_FAILURE",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "UNAVAILABLE",
+      payload: { error: res.error, request: res.request, sentAt: res.sentAt, note: "no retry attempted until broker state is read" },
+    });
+    return {
+      state: "UNAVAILABLE",
+      ok: false,
+      orderKey,
+      signalId: instruction.signalId,
+      reasons: [`connection failure: ${res.error}. Broker state must be read before any retry.`],
+      proposal: evaluation.proposal,
+      broker: null,
+      timing: null,
+      protection: null,
+    };
+  }
+
+  await appendRecord({
+    kind: "ORDER_REQUESTED",
+    signalId: instruction.signalId,
+    strategyId: instruction.strategyId,
+    strategyVersion: instruction.strategyVersion,
+    orderKey,
+    state: "REQUESTED",
+    payload: {
+      request: res.request,
+      sentAt: res.sentAt,
+      proposal: evaluation.proposal,
+      origin: instruction.origin,
+      testProfile: settings.testProfileInUse,
+    },
+  });
+
+  const body = res.body ?? {};
+  const ackJson = body;
+  const fill = body.orderFillTransaction ?? null;
+  const rejected = body.orderRejectTransaction ?? body.orderCancelTransaction ?? null;
+
+  if (!res.ok || rejected) {
+    const errorMessage =
+      rejected?.rejectReason ?? body.errorMessage ?? (res.ok ? "broker returned a non-fill transaction" : `HTTP ${res.status}`);
+    const reasons = [`broker rejected: ${errorMessage}${rejected?.rejectReason ? ` (${rejected.rejectReason})` : ""}`];
+    await appendRecord({
+      kind: "ORDER_REJECTED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "REJECTED",
+      payload: { status: res.status, brokerErrorText: rejected?.rejectReason ?? body.errorMessage ?? res.text, ackJson, roundTripMs },
+    });
+    return {
+      state: "REJECTED",
+      ok: false,
+      orderKey,
+      signalId: instruction.signalId,
+      reasons,
+      proposal: evaluation.proposal,
+      broker: {
+        orderId: null,
+        tradeId: null,
+        transactionId: rejected?.id ?? null,
+        ackStatus: res.status,
+        ackJson,
+        errorMessage: rejected?.rejectReason ?? body.errorMessage ?? res.text,
+      },
+      timing: { requestedAt, acknowledgedAt, roundTripMs, instructionToAckMs },
+      protection: null,
+    };
+  }
+
+  const orderId: string | null = fill?.orderID ? String(fill.orderID) : null;
+  const tradeId: string | null = fill?.tradeOpened?.tradeID ? String(fill.tradeOpened.tradeID) : null;
+  const transactionId: string | null = fill?.id ? String(fill.id) : null;
+  const partiallyFilled = Boolean(fill?.tradeOpened && fill?.units !== undefined && body.orderCancelTransaction);
+
+  await appendRecord({
+    kind: "ORDER_ACKNOWLEDGED",
+    signalId: instruction.signalId,
+    strategyId: instruction.strategyId,
+    strategyVersion: instruction.strategyVersion,
+    orderKey,
+    state: "ACKNOWLEDGED",
+    payload: {
+      ackStatus: res.status,
+      orderId,
+      tradeId,
+      transactionId,
+      roundTripMs,
+      instructionToAckMs,
+      brokerTimestamp: fill?.time ?? null,
+      ackJson,
+    },
+  });
+
+  if (tradeId) {
+    await appendRecord({
+      kind: partiallyFilled ? "PARTIAL_FILL" : "FILL",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: partiallyFilled ? "PARTIALLY_FILLED" : "FILLED",
+      payload: {
+        orderId,
+        tradeId,
+        transactionId,
+        units: fill?.units ?? null,
+        price: fill?.price ?? null,
+        pl: fill?.pl ?? null,
+        brokerTimestamp: fill?.time ?? null,
+        tradeOpened: fill?.tradeOpened ?? null,
+        ackJson,
+      },
+    });
+  }
+
+  // Confirm protection from the broker's own object, not from what we sent.
+  const protection = tradeId ? await confirmProtection(client, instruction, orderKey, tradeId) : null;
+
+  return {
+    state: protection && (protection as any).protected ? "PROTECTED" : tradeId ? "FILLED" : "ACKNOWLEDGED",
+    ok: true,
+    orderKey,
+    signalId: instruction.signalId,
+    reasons: [],
+    proposal: evaluation.proposal,
+    broker: { orderId, tradeId, transactionId, ackStatus: res.status, ackJson, errorMessage: null },
+    timing: { requestedAt, acknowledgedAt, roundTripMs, instructionToAckMs },
+    protection,
+  };
+}
+
+/**
+ * Read the trade back from a FRESH broker GET and confirm the stop and target are
+ * attached to it. This is the only thing that may move an order to PROTECTED.
+ */
+export async function confirmProtection(
+  client: Client,
+  instruction: SignalInstruction,
+  orderKey: string,
+  tradeId: string,
+): Promise<Record<string, unknown>> {
+  const res = await client.trade(tradeId);
+  if (isTransportFailure(res)) {
+    await appendRecord({
+      kind: "CONNECTION_FAILURE",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: "FILLED",
+      payload: { stage: "confirmProtection", error: res.error },
+    });
+    return { protected: false, reason: "broker read failed", error: res.error };
+  }
+  const trade = res.body?.trade ?? null;
+  const sl = trade?.stopLossOrder ?? null;
+  const tp = trade?.takeProfitOrder ?? null;
+  const protectedOk = Boolean(sl && tp && trade?.state === "OPEN");
+  const evidence = {
+    readAt: new Date().toISOString(),
+    source: `GET /v3/accounts/{id}/trades/${tradeId} (fresh read, not in-memory belief)`,
+    trade: trade
+      ? {
+          id: trade.id,
+          instrument: trade.instrument,
+          state: trade.state,
+          currentUnits: trade.currentUnits,
+          price: trade.price,
+          openTime: trade.openTime,
+          stopLossOrder: sl
+            ? { id: sl.id, price: sl.price, timeInForce: sl.timeInForce, state: sl.state, type: sl.type, clientExtensions: sl.clientExtensions }
+            : null,
+          takeProfitOrder: tp
+            ? { id: tp.id, price: tp.price, timeInForce: tp.timeInForce, state: tp.state, type: tp.type, clientExtensions: tp.clientExtensions }
+            : null,
+        }
+      : null,
+    protected: protectedOk,
+  };
+  await appendRecord({
+    kind: protectedOk ? "PROTECTED" : "VALIDATION_REFUSED",
+    signalId: instruction.signalId,
+    strategyId: instruction.strategyId,
+    strategyVersion: instruction.strategyVersion,
+    orderKey,
+    state: protectedOk ? "PROTECTED" : "FILLED",
+    payload: evidence,
+  });
+  return evidence;
+}
+
+/* ------------------------------------------------------------- realised P/L */
+
+/** Sum of realised P/L on Meridian-managed closes during the current UTC day. */
+export async function realisedToday(): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { all } = await replay();
+  let sum = 0;
+  for (const r of all) {
+    if (r.kind !== "CLOSED" || r.recordedAt.slice(0, 10) !== today) continue;
+    const pl = Number((r.payload as any)?.realizedPL ?? 0);
+    if (Number.isFinite(pl)) sum += pl;
+  }
+  return sum;
+}
+
+export { TEST_PROFILE };

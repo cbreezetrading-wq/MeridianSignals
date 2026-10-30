@@ -1,0 +1,28 @@
+generated 2026-10-12T17:16:36.912Z  ruleset v1
+EUR_USD: 138999 bars  2002-05-06T20:00:00.000Z .. 2026-10-12T16:00:00.000Z  incomplete refused 1
+GBP_USD: 138789 bars  2002-05-06T20:00:00.000Z .. 2026-10-12T16:00:00.000Z  incomplete refused 1
+USD_JPY: 138900 bars  2002-05-06T20:00:00.000Z .. 2026-10-12T16:00:00.000Z  incomplete refused 1
+AUD_USD: 138816 bars  2002-05-06T20:00:00.000Z .. 2026-10-12T16:00:00.000Z  incomplete refused 1
+--- headline_nextBarOpen_bidAsk ---
+  EUR/USD: n=961 win%=32.5 exp=-0.77 pips=-739.2 R=-36.62
+  GBP/USD: n=943 win%=30.4 exp=-3.95 pips=-3728.8 R=-103.83
+  USD/JPY: n=939 win%=33.2 exp=0.05 pips=51.1 R=-27.19
+  AUD/USD: n=946 win%=33.2 exp=0.19 pips=175.9 R=-29.93
+  COMBINED: n=3789 win%=32.3 exp=-1.12 pips=-4241 R=-197.58 PF=0.94 maxDDpips=5988.5 maxDDR=208.76
+--- zeroCost_mid_nextBarOpen ---
+  EUR/USD: n=961 win%=37.3 exp=1.05 pips=1005.9 R=38.75
+  GBP/USD: n=943 win%=36.6 exp=0.23 pips=212.2 R=13.58
+  USD/JPY: n=939 win%=37.7 exp=1.87 pips=1751.3 R=45.36
+  AUD/USD: n=946 win%=37.9 exp=1.39 pips=1319.6 R=27.78
+  COMBINED: n=3789 win%=37.4 exp=1.13 pips=4289.1 R=125.47 PF=1.07 maxDDpips=1463.2 maxDDR=49.03
+--- optimisticUpperBound_triggerClose ---
+  EUR/USD: n=961 win%=33.7 exp=1 pips=961.6 R=37.7
+  GBP/USD: n=943 win%=32.6 exp=-0.91 pips=-860.5 R=-6.03
+  USD/JPY: n=939 win%=34.1 exp=1.6 pips=1504.2 R=37.79
+  AUD/USD: n=946 win%=34.2 exp=1.91 pips=1810.8 R=46.27
+  COMBINED: n=3789 win%=33.7 exp=0.9 pips=3416.2 R=115.74 PF=1.05 maxDDpips=1986.7 maxDDR=58.17
+--- reconciliation ---
+  EUR/USD: {"backtestLastTriggerBarUtc":"2026-10-09T14:00:00.000Z","backtestSide":"short","backtestTriggerClose":1.1196,"liveSignal":"SHORT","liveEntry":1.1196,"liveTriggerBarUtc":"2026-10-09T14:00:00.000Z","triggerIsOnFinalCachedBar":false,"triggerIsOnFinalCachedBarNote":null,"agrees":true}
+  GBP/USD: {"backtestLastTriggerBarUtc":"2026-10-12T16:00:00.000Z","backtestSide":"short","backtestTriggerClose":1.32076,"liveSignal":"SHORT","liveEntry":1.32076,"liveTriggerBarUtc":"2026-10-12T16:00:00.000Z","triggerIsOnFinalCachedBar":true,"triggerIsOnFinalCachedBarNote":"fired on the newest bar in the cache, so there is no next bar to fill on: a live signal, no completed trade yet","agrees":true}
+  USD/JPY: {"backtestLastTriggerBarUtc":"2026-10-09T09:00:00.000Z","backtestSide":"long","backtestTriggerClose":158.332,"liveSignal":"LONG","liveEntry":158.332,"liveTriggerBarUtc":"2026-10-09T09:00:00.000Z","triggerIsOnFinalCachedBar":false,"triggerIsOnFinalCachedBarNote":null,"agrees":true}
+  AUD/USD: {"backtestLastTriggerBarUtc":"2026-10-12T16:00:00.000Z","backtestSide":"short","backtestTriggerClose":0.69581,"liveSignal":"SHORT","liveEntry":0.69581,"liveTriggerBarUtc":"2026-10-12T16:00:00.000Z","triggerIsOnFinalCachedBar":true,"triggerIsOnFinalCachedBarNote":"fired on the newest bar in the cache, so there is no next bar to fill on: a live signal, no completed trade yet","agrees":true}

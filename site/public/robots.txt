@@ -1,0 +1,29 @@
+# Meridian Signals is a private personal tool. It is deliberately unlisted.
+# Kept out of search indexes and out of any aggregation or listing service.
+User-agent: *
+Disallow: /
+
+# Explicitly refuse the common crawlers, including those that ignore wildcards.
+User-agent: Googlebot
+Disallow: /
+
+User-agent: Bingbot
+Disallow: /
+
+User-agent: YandexBot
+Disallow: /
+
+User-agent: Baiduspider
+Disallow: /
+
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /

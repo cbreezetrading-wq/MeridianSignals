@@ -1,0 +1,28 @@
+generated 2026-10-26T12:53:11.266Z  ruleset v1  granularity D
+EUR_USD: 7177 bars  2002-05-06T21:00:00.000Z .. 2026-10-22T21:00:00.000Z  incomplete refused 1  missingWeekdays 29/6384
+GBP_USD: 7153 bars  2002-05-06T21:00:00.000Z .. 2026-10-22T21:00:00.000Z  incomplete refused 1  missingWeekdays 28/6384
+USD_JPY: 7177 bars  2002-05-06T21:00:00.000Z .. 2026-10-22T21:00:00.000Z  incomplete refused 1  missingWeekdays 29/6384
+AUD_USD: 7116 bars  2002-05-06T21:00:00.000Z .. 2026-10-22T21:00:00.000Z  incomplete refused 1  missingWeekdays 31/6384
+--- headline_nextBarOpen_bidAsk ---
+  EUR/USD: n=63 win%=23.8 exp=-47.16 pips=-2971.2 R=-21.15
+  GBP/USD: n=49 win%=34.7 exp=0.92 pips=45.2 R=1.19
+  USD/JPY: n=48 win%=27.1 exp=-27.65 pips=-1327.3 R=-7.91
+  AUD/USD: n=48 win%=43.8 exp=18.33 pips=880 R=13.61
+  COMBINED: n=208 win%=31.7 exp=-16.22 pips=-3373.4 R=-14.27 PF=0.82 maxDDpips=4507.9 maxDDR=32.02 streak=18 medHoldDays=8 meanHoldDays=13.2
+--- zeroCost_mid_nextBarOpen ---
+  EUR/USD: n=63 win%=28.6 exp=-24.53 pips=-1545.2 R=-12.62
+  GBP/USD: n=49 win%=38.8 exp=2.48 pips=121.3 R=2.03
+  USD/JPY: n=48 win%=29.2 exp=-28.45 pips=-1365.7 R=-8.45
+  AUD/USD: n=48 win%=45.8 exp=15.3 pips=734.6 R=12.35
+  COMBINED: n=208 win%=35.1 exp=-9.88 pips=-2055.1 R=-6.69 PF=0.87 maxDDpips=3213.5 maxDDR=25.92 streak=10 medHoldDays=8 meanHoldDays=13.3
+--- optimisticUpperBound_triggerClose ---
+  EUR/USD: n=63 win%=23.8 exp=-44.24 pips=-2787.1 R=-19.74
+  GBP/USD: n=49 win%=34.7 exp=4.32 pips=211.6 R=1.74
+  USD/JPY: n=48 win%=27.1 exp=-24.4 pips=-1171 R=-7.01
+  AUD/USD: n=48 win%=43.8 exp=19.85 pips=952.8 R=13.79
+  COMBINED: n=208 win%=31.7 exp=-13.43 pips=-2793.8 R=-11.22 PF=0.85 maxDDpips=4025.1 maxDDR=30.35 streak=18 medHoldDays=9 meanHoldDays=14.5
+--- cost/edge ---
+{"grossEdge":-9.88,"spreadPaid":6.34,"net":-16.22}
+--- years: 9/24 positive ---
+--- holding (days) ---
+{"trades":208,"minDays":0,"medianDays":8,"meanDays":13.16,"p90Days":32,"maxDays":103,"histogram":{"<1d":13,"1-2d":16,"2-4d":24,"4-7d":38,"1-2w":50,"2-4w":41,"1-3m":25,"3m+":1},"note":"Holding time is what decides how much of a trade's cost is swap/financing. Swap is NOT modelled anywhere in this run — these figures exist only to size that omission, and they say it is large: at a daily median hold a trade pays multiple rollovers."}
