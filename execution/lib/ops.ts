@@ -17,6 +17,7 @@
 import type { Client, BrokerResponse, BrokerFailure } from "./client.ts";
 import { appendRecord, replay } from "./record.ts";
 import { readAccount, readPause, writePause, isManaged, managedTradeIdsFromRecord, MERIDIAN_TAG } from "./engine.ts";
+import { riskBreachesFromRecord } from "./risk.ts";
 import type { AccountSnapshot } from "./engine.ts";
 import { resolveSettings, type ExecutionConfig, type ResolvedSettings } from "./config.ts";
 import { PRACTICE_HOST } from "./interlock.ts";
@@ -411,6 +412,19 @@ export type StatusSnapshot = {
   }>;
   record: { path: string; records: number; chainOk: boolean };
   latency: { lastRoundTripMs: number | null; lastInstructionToAckMs: number | null; measuredCount: number; medianRoundTripMs: number | null };
+  /**
+   * Realised risk measured at the broker's fill against the configured maximum. A breach
+   * here is a filled position that risked more than the owner allows; it is surfaced as an
+   * alert as well, because a record nobody reads is a log line.
+   */
+  risk: {
+    breaches: Awaited<ReturnType<typeof riskBreachesFromRecord>>;
+    breachCount: number;
+    unmeasuredCount: number;
+    note: string;
+  };
+  /** Everything that needs a human eye, in plain sentences. Empty means nothing outstanding. */
+  alerts: string[];
 };
 
 /**
@@ -469,6 +483,21 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
     .filter((r) => r.kind === "ORDER_ACKNOWLEDGED")
     .map((r) => Number((r.payload as any)?.instructionToAckMs))
     .filter((n) => Number.isFinite(n));
+  const breaches = await riskBreachesFromRecord();
+  const unmeasured = all.filter((r) => r.kind === "REALISED_RISK" && (r.payload as any)?.measured === false).length;
+  const alerts: string[] = [];
+  for (const b of breaches) {
+    alerts.push(
+      `RISK BREACH: trade ${b.tradeId ?? "?"} ${b.instrument ?? ""} ${b.direction ?? ""} ${b.units ?? "?"} units filled at ${b.fillPrice ?? "?"} with its stop at ${b.stopPrice ?? "?"} — realised risk ${b.realisedRiskAccountCurrency?.toFixed(2) ?? "?"} against a maximum of ${b.capAccountCurrency?.toFixed(2) ?? "?"} (+${b.breachAmountAccountCurrency?.toFixed(2) ?? "?"}, +${b.breachPctOfCap?.toFixed(2) ?? "?"}%), budgeted ${b.budgetedRiskAccountCurrency?.toFixed(2) ?? "unknown"}`,
+    );
+  }
+  if (unmeasured > 0) {
+    alerts.push(`${unmeasured} filled trade(s) have an UNMEASURED realised risk — see the REALISED_RISK records with state UNMEASURED for the reason`);
+  }
+  if (!chain.ok) {
+    alerts.push(`the execution record's hash chain is BROKEN at record ${chain.firstBreak?.seq ?? "?"} (${chain.firstBreak?.reason ?? ""}) — the record is not trustworthy until this is explained`);
+  }
+
   const median = (xs: number[]): number | null => {
     if (xs.length === 0) return null;
     const s = [...xs].sort((a, b) => a - b);
@@ -504,5 +533,12 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
       measuredCount: trips.length,
       medianRoundTripMs: median(trips),
     },
+    risk: {
+      breaches,
+      breachCount: breaches.length,
+      unmeasuredCount: unmeasured,
+      note: "Realised risk is measured from the broker's fill price and the stop the broker reports as attached. A breach is a position that risked more than the configured maximum per trade; it is detected after the fill because a MARKET/FOK entry is filled inside the request that submits it.",
+    },
+    alerts,
   };
 }
