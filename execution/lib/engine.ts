@@ -32,11 +32,13 @@ import {
   validateInstruction,
   sizePosition,
   formatPrice,
+  farSideEntryPrice,
   pipSize,
   type SignalInstruction,
   type InstrumentMeta,
   type Quote,
 } from "./instruction.ts";
+import { appendRealisedRisk, appendUnmeasuredRisk, computeRealisedRisk, riskAtPrice, RISK_EPSILON } from "./risk.ts";
 
 export const MERIDIAN_TAG = "MERIDIAN-PRACTICE-TEST";
 export const MANAGED_ID_PREFIX = "msig-";
@@ -49,6 +51,8 @@ export type EngineState =
   | "PAUSED"
   | "DUPLICATE_SUPPRESSED"
   | "REFUSED_GUARD"
+  /** Refused at the last moment because filling at the current price would risk more than the cap. */
+  | "REFUSED_RISK_RECHECK"
   | "REQUESTED"
   | "ACKNOWLEDGED"
   | "FILLED"
@@ -533,7 +537,10 @@ export async function evaluate(
     sizing = sizePosition({
       instrument: instruction.instrument,
       direction: instruction.direction,
-      entryPrice: quote.mid,
+      // The far side of the spread, not the mid: ask for a long, bid for a short. This is
+      // the price the position will actually fill at, so this is the stop distance the
+      // position really carries and the one the size must be derived from.
+      quote,
       stopPrice: instruction.stopPrice,
       nav: account.nav,
       accountCurrency: account.currency,
@@ -577,6 +584,7 @@ export async function evaluate(
 
   // 10. the order, with protection attached in the same request object.
   const orderPayload = buildOrderPayload(instruction, sizing.signedUnits, instrumentMeta, orderKey);
+  const riskCapAccountCurrency = (account.nav * riskPct) / 100;
   const proposal = {
     mode: settings.mode,
     modeSource: settings.modeSource,
@@ -587,17 +595,40 @@ export async function evaluate(
     direction: instruction.direction,
     units: sizing.units,
     signedUnits: sizing.signedUnits,
+    /** The mid at sizing time. Recorded for reference only — the size is NOT derived from it. */
     entryPriceReference: quote.mid,
+    /** The price the order is expected to fill at: ask for a long, bid for a short. */
+    entryPriceFar: sizing.entryPriceFar,
+    sizingBasis: sizing.sizingBasis,
     bid: quote.bid,
     ask: quote.ask,
     spreadPips: Number(quote.spreadPips.toFixed(2)),
     stopPrice: instruction.stopPrice,
     takeProfitPrice: instruction.takeProfitPrice,
     stopDistancePips: Number((sizing.riskPerUnitQuote / pipSize(instruction.instrument)).toFixed(1)),
+    /** units × far-side stop distance × conversion: the risk being budgeted. */
     riskAccountCurrency: Number(sizing.riskAccountCurrency.toFixed(2)),
     riskPctOfNav: Number(sizing.riskPctOfNav.toFixed(4)),
     riskPctSetting: riskPct,
     riskSettingSource: settings.values.riskPerTradePct.source,
+    /** The configured maximum for one trade, which realised risk is checked against. */
+    riskCapAccountCurrency: Number(riskCapAccountCurrency.toFixed(4)),
+    riskCapPctOfNav: riskPct,
+    /**
+     * What the old mid-based sizing would have submitted for this same quote, and what it
+     * would have risked at the far side. Kept so the defect and the fix are comparable in
+     * the record itself rather than only in a report.
+     */
+    midBasis: {
+      units: sizing.midBasis.units,
+      stopDistancePips: Number((sizing.midBasis.riskPerUnitQuote / pipSize(instruction.instrument)).toFixed(1)),
+      budgetedRiskAccountCurrency: Number(sizing.midBasis.riskAccountCurrency.toFixed(2)),
+      riskAtFarSideAccountCurrency: Number(
+        (sizing.midBasis.units * sizing.riskPerUnitQuote * sizing.quoteToAccountRate).toFixed(2),
+      ),
+      note: "the previous sizing, kept for comparison only; it risks more than riskCapAccountCurrency because the fill is on the far side of the spread it sized from",
+    },
+    quoteToAccountRate: sizing.quoteToAccountRate,
     notionalAccountCurrency: Number(sizing.notionalAccountCurrency.toFixed(2)),
     accountCurrency: account.currency,
     equity: account.nav,
@@ -700,6 +731,107 @@ export async function checkDuplicate(client: Client, orderKey: string, signalId:
     if (hit) return { duplicate: true, foundIn: "BROKER_TRADE", evidence: { id: hit.id, instrument: hit.instrument, currentUnits: hit.currentUnits, stopLossOrder: hit.stopLossOrder?.clientExtensions ?? null } };
   }
   return { duplicate: false, foundIn: null, evidence: null };
+}
+
+/* ------------------------------------------------------------ risk re-check */
+
+export type RiskRecheck = { ok: boolean; state: EngineState; reasons: string[]; recheck: Record<string, unknown> };
+
+/**
+ * THE LAST POINT AT WHICH THE ORDER CAN STILL BE REFUSED.
+ *
+ * The size was derived from the far side of the spread read during evaluation. Between
+ * that read and this call the price can move, and an approved unit count cannot be
+ * re-sized at the last moment (that would submit something other than what the owner
+ * approved). So the price is read once more and the order is refused if filling at the
+ * price now available would risk more than the configured maximum.
+ *
+ * This is the ONLY refusal that is still possible. The entry is a MARKET order with
+ * timeInForce FOK, filled inside the request that submits it, so once the POST has been
+ * made there is no moment at which Meridian could refuse or cancel: a fill worse than the
+ * far side is detected after the fact instead (lib/risk.ts, REALISED_RISK records).
+ *
+ * Unreadable price ⇒ no submission. Guessing here would be exactly the kind of assumption
+ * the rest of this engine refuses to make.
+ */
+export async function recheckRiskBeforeSubmit(
+  client: Client,
+  instruction: SignalInstruction,
+  proposal: Record<string, any> | null,
+): Promise<RiskRecheck> {
+  const checkedAt = new Date().toISOString();
+  if (!proposal) {
+    return { ok: false, state: "REFUSED_RISK_RECHECK", reasons: ["REFUSED_RISK_RECHECK: no proposal exists to re-check, so the risk cannot be confirmed"], recheck: { checkedAt } };
+  }
+  const units = Number(proposal.units);
+  const stopPrice = Number(proposal.stopPrice);
+  const rate = Number(proposal.quoteToAccountRate ?? 1);
+  const cap = Number(proposal.riskCapAccountCurrency);
+  const sizedAt = Number(proposal.entryPriceFar);
+  const pip = pipSize(instruction.instrument);
+  const farSide = instruction.direction === "long" ? "ask" : "bid";
+  const base = {
+    checkedAt,
+    units,
+    stopPrice,
+    quoteToAccountRate: rate,
+    sizedAtEntryPriceFar: sizedAt,
+    capAccountCurrency: Number.isFinite(cap) ? cap : null,
+  };
+
+  const quotes = await readQuotes(client, [instruction.instrument]);
+  const quote = quotes[instruction.instrument];
+  if (!quote || !Number.isFinite(quote.bid) || !Number.isFinite(quote.ask)) {
+    return {
+      ok: false,
+      state: "UNAVAILABLE",
+      reasons: [`UNAVAILABLE: could not re-read ${instruction.instrument} immediately before submission, so the risk at the price this order would fill at cannot be confirmed. Nothing was submitted.`],
+      recheck: { ...base, quoteRead: false },
+    };
+  }
+
+  const entryNow = farSideEntryPrice(instruction.direction, quote);
+  const stopCrossed = instruction.direction === "long" ? entryNow <= stopPrice : entryNow >= stopPrice;
+  const riskNow = riskAtPrice({ units, entryPrice: entryNow, stopPrice, quoteToAccountRate: rate });
+  const adverseDrift = (instruction.direction === "long" ? entryNow - sizedAt : sizedAt - entryNow) / pip;
+  const withinCap = Number.isFinite(cap) && !stopCrossed && riskNow <= cap + RISK_EPSILON;
+  const recheck = {
+    ...base,
+    quoteRead: true,
+    quoteTime: quote.time,
+    bid: quote.bid,
+    ask: quote.ask,
+    mid: quote.mid,
+    farSideUsed: farSide,
+    entryPriceFarNow: entryNow,
+    adverseDriftPips: Number(adverseDrift.toFixed(2)),
+    riskAtCurrentFarSide: Number(riskNow.toFixed(4)),
+    withinCap,
+    stopAlreadyCrossed: stopCrossed,
+  };
+
+  if (!Number.isFinite(cap)) {
+    return { ok: false, state: "REFUSED_RISK_RECHECK", reasons: ["REFUSED_RISK_RECHECK: the configured maximum risk could not be determined, so this order cannot be shown to be safe"], recheck };
+  }
+  if (stopCrossed) {
+    return {
+      ok: false,
+      state: "REFUSED_RISK_RECHECK",
+      reasons: [`REFUSED_RISK_RECHECK: the price available now (${farSide} ${entryNow}) is already through the stop ${stopPrice}, so the stop distance — and the risk — cannot be derived. Nothing was submitted.`],
+      recheck,
+    };
+  }
+  if (!withinCap) {
+    return {
+      ok: false,
+      state: "REFUSED_RISK_RECHECK",
+      reasons: [
+        `REFUSED_RISK_RECHECK: at the price available now (${farSide} ${entryNow}) the approved ${units} units would risk ${riskNow.toFixed(2)} ${String(proposal.accountCurrency ?? "")}, above the configured maximum of ${cap.toFixed(2)} (${String(proposal.riskPctSetting ?? "")}% of NAV). The price moved ${adverseDrift.toFixed(2)} pips against the entry since the size was derived. Nothing was submitted.`,
+      ],
+      recheck,
+    };
+  }
+  return { ok: true, state: "REQUESTED", reasons: [], recheck };
 }
 
 /* ------------------------------------------------------------------ submit */
@@ -815,6 +947,33 @@ export async function submitSignal(
     };
   }
 
+  // 7b. RISK RE-CHECK — the last moment at which this order can still be refused.
+  // See recheckRiskBeforeSubmit: after the POST there is no window in which to refuse,
+  // so this is where a price that has moved against the entry stops the order.
+  const recheck = await recheckRiskBeforeSubmit(client, instruction, evaluation.proposal);
+  if (!recheck.ok) {
+    await appendRecord({
+      kind: "VALIDATION_REFUSED",
+      signalId: instruction.signalId,
+      strategyId: instruction.strategyId,
+      strategyVersion: instruction.strategyVersion,
+      orderKey,
+      state: recheck.state,
+      payload: { reasons: recheck.reasons, riskRecheck: recheck.recheck, proposal: evaluation.proposal },
+    });
+    return {
+      state: recheck.state,
+      ok: false,
+      orderKey,
+      signalId: instruction.signalId,
+      reasons: recheck.reasons,
+      proposal: evaluation.proposal,
+      broker: null,
+      timing: null,
+      protection: null,
+    };
+  }
+
   // Submit. Timing is measured around the write only.
   const requestedAt = new Date().toISOString();
   const t0 = Date.now();
@@ -833,7 +992,17 @@ export async function submitSignal(
       strategyVersion: instruction.strategyVersion,
       orderKey,
       state: "UNAVAILABLE",
-      payload: { error: res.error, request: res.request, sentAt: res.sentAt, note: "no retry attempted until broker state is read" },
+      payload: {
+        error: res.error,
+        request: res.request,
+        sentAt: res.sentAt,
+        // The proposal is kept here on purpose: if the response is lost the order may
+        // still be filled at the broker, and the budgeted risk has to remain recoverable
+        // from the record so the realised risk can be compared with it later.
+        proposal: evaluation.proposal,
+        riskRecheck: recheck.recheck,
+        note: "no retry attempted until broker state is read",
+      },
     });
     return {
       state: "UNAVAILABLE",
@@ -859,6 +1028,7 @@ export async function submitSignal(
       request: res.request,
       sentAt: res.sentAt,
       proposal: evaluation.proposal,
+      riskRecheck: recheck.recheck,
       origin: instruction.origin,
       testProfile: settings.testProfileInUse,
     },
@@ -949,7 +1119,7 @@ export async function submitSignal(
   }
 
   // Confirm protection from the broker's own object, not from what we sent.
-  const protection = tradeId ? await confirmProtection(client, instruction, orderKey, tradeId) : null;
+  const protection = tradeId ? await confirmProtection(client, instruction, orderKey, tradeId, { proposal: evaluation.proposal }) : null;
 
   return {
     state: protection && (protection as any).protected ? "PROTECTED" : tradeId ? "FILLED" : "ACKNOWLEDGED",
@@ -973,6 +1143,7 @@ export async function confirmProtection(
   instruction: SignalInstruction,
   orderKey: string,
   tradeId: string,
+  opts: { proposal?: Record<string, any> | null } = {},
 ): Promise<Record<string, unknown>> {
   const res = await client.trade(tradeId);
   if (isTransportFailure(res)) {
@@ -1021,7 +1192,162 @@ export async function confirmProtection(
     state: protectedOk ? "PROTECTED" : "FILLED",
     payload: evidence,
   });
+
+  // Realised risk, from the broker's own fill price and the stop the broker actually has
+  // attached — recorded next to the budget. This runs on every path that confirms a trade,
+  // including the adopted-after-a-dropped-connection path, so an order whose response was
+  // lost is still measured. It never throws: a measurement failure is recorded as
+  // UNMEASURED rather than being allowed to break protection confirmation.
+  try {
+    await recordRealisedRisk(client, instruction, orderKey, trade, opts.proposal ?? null);
+  } catch (error) {
+    await appendUnmeasuredRisk({
+      orderKey,
+      signalId: instruction.signalId,
+      tradeId,
+      reason: "MEASUREMENT_THREW",
+      detail: error instanceof Error ? error.message : String(error),
+      source: "confirmProtection",
+    });
+  }
   return evidence;
+}
+
+/* ------------------------------------------------------- realised risk record */
+
+/**
+ * Recover the proposal that produced an order from the append-only record. Needed when the
+ * caller no longer holds it in memory — the adopted-after-a-dropped-connection path, where
+ * submitSignal returned before the fill was known.
+ */
+async function proposalFromRecord(orderKey: string): Promise<Record<string, any> | null> {
+  const { byOrderKey } = await replay();
+  for (const r of byOrderKey.get(orderKey) ?? []) {
+    const p = (r.payload ?? {}) as any;
+    if (p?.proposal && typeof p.proposal === "object") return p.proposal;
+  }
+  return null;
+}
+
+/**
+ * Quote→account conversion for the realised-risk calculation, without inventing a rate.
+ * Order of preference: the rate the size was actually derived with; the account currency
+ * when the instrument's quote currency is already it; otherwise a fresh price read.
+ * Returns null when no rate can be established, and the caller records UNMEASURED.
+ */
+async function resolveQuoteToAccountRate(
+  client: Client,
+  instruction: SignalInstruction,
+  proposal: Record<string, any> | null,
+): Promise<{ rate: number | null; source: string }> {
+  const fromProposal = Number(proposal?.quoteToAccountRate);
+  if (Number.isFinite(fromProposal) && fromProposal > 0) {
+    return { rate: fromProposal, source: `the rate the size was derived with (${String(proposal?.conversion ?? "")})` };
+  }
+  const quoteCcy = instruction.instrument.split("_")[1] ?? "";
+  let accountCcy = typeof proposal?.accountCurrency === "string" ? proposal.accountCurrency : null;
+  if (!accountCcy) {
+    const summary = await client.summary();
+    if (isTransportFailure(summary) || !summary.ok) return { rate: null, source: "account currency could not be read" };
+    accountCcy = String(summary.body?.account?.currency ?? "");
+  }
+  if (!accountCcy) return { rate: null, source: "account currency unknown" };
+  if (quoteCcy === accountCcy) return { rate: 1, source: `quote currency ${quoteCcy} is the account currency` };
+
+  const quotes = await readQuotes(client, [`${accountCcy}_${quoteCcy}`, `${quoteCcy}_${accountCcy}`]);
+  const direct = quotes[`${accountCcy}_${quoteCcy}`];
+  const inverse = quotes[`${quoteCcy}_${accountCcy}`];
+  if (direct) return { rate: 1 / direct.mid, source: `1 ${quoteCcy} = ${(1 / direct.mid).toFixed(8)} ${accountCcy} from ${accountCcy}_${quoteCcy} mid ${direct.mid}` };
+  if (inverse) return { rate: inverse.mid, source: `1 ${quoteCcy} = ${inverse.mid.toFixed(8)} ${accountCcy} from ${quoteCcy}_${accountCcy} mid ${inverse.mid}` };
+  return { rate: null, source: `no ${accountCcy}_${quoteCcy} or ${quoteCcy}_${accountCcy} price was available` };
+}
+
+/**
+ * Measure the realised risk of a filled trade and append it to the record.
+ *
+ * Inputs are the broker's, never ours: the trade's own fill price (`price`) and the stop
+ * the broker reports as attached (`stopLossOrder.price`). The budgeted figure comes from
+ * the proposal if it is in hand, otherwise from the record.
+ */
+export async function recordRealisedRisk(
+  client: Client,
+  instruction: SignalInstruction,
+  orderKey: string,
+  trade: any,
+  proposal: Record<string, any> | null,
+): Promise<ReturnType<typeof computeRealisedRisk> | null> {
+  if (!trade) return null;
+  const units = Math.abs(Number(trade.currentUnits));
+  const fillPrice = Number(trade.price);
+  const attachedStop = Number(trade.stopLossOrder?.price);
+
+  if (!Number.isFinite(attachedStop) || attachedStop <= 0) {
+    await appendUnmeasuredRisk({
+      orderKey,
+      signalId: instruction.signalId,
+      tradeId: trade.id ? String(trade.id) : null,
+      reason: "NO_ATTACHED_STOP",
+      detail: "the broker's trade object carries no stop-loss price, so the risk this position carries cannot be measured. Protection is already reported as failing for this trade.",
+      source: "confirmProtection trade read-back",
+    });
+    return null;
+  }
+
+  const fromRecord = proposal ?? (await proposalFromRecord(orderKey));
+  const conversion = await resolveQuoteToAccountRate(client, instruction, fromRecord);
+  if (conversion.rate === null) {
+    await appendUnmeasuredRisk({
+      orderKey,
+      signalId: instruction.signalId,
+      tradeId: trade.id ? String(trade.id) : null,
+      reason: "NO_CONVERSION_RATE",
+      detail: conversion.source,
+      source: "confirmProtection trade read-back",
+    });
+    return null;
+  }
+
+  const budget = Number(fromRecord?.riskAccountCurrency);
+  const cap = Number(fromRecord?.riskCapAccountCurrency);
+  const nav = Number(fromRecord?.equity);
+
+  const measurement = computeRealisedRisk({
+    instrument: String(trade.instrument ?? instruction.instrument),
+    direction: instruction.direction,
+    units,
+    fillPrice,
+    fillPriceSource: "the broker's trade.price (average fill price of the trade it opened)",
+    stopPrice: attachedStop,
+    stopPriceSource: "BROKER_ATTACHED_STOP",
+    quoteToAccountRate: conversion.rate,
+    conversionSource: conversion.source,
+    nav: Number.isFinite(nav) ? nav : null,
+    budgetedRiskAccountCurrency: Number.isFinite(budget) ? budget : null,
+    capAccountCurrency: Number.isFinite(cap) ? cap : null,
+    capPctOfNav: Number.isFinite(Number(fromRecord?.riskPctSetting)) ? Number(fromRecord?.riskPctSetting) : null,
+  });
+
+  if (!measurement.ok) {
+    await appendUnmeasuredRisk({
+      orderKey,
+      signalId: instruction.signalId,
+      tradeId: trade.id ? String(trade.id) : null,
+      reason: measurement.reason,
+      detail: measurement.detail,
+      source: "confirmProtection trade read-back",
+    });
+    return measurement;
+  }
+
+  await appendRealisedRisk({
+    measurement,
+    orderKey,
+    signalId: instruction.signalId,
+    tradeId: trade.id ? String(trade.id) : null,
+    origin: fromRecord?.origin ?? instruction.origin,
+    source: "confirmProtection: computed from the broker's trade.price and the attached stopLossOrder.price, read back after the fill",
+  });
+  return measurement;
 }
 
 /* ------------------------------------------------------------- realised P/L */

@@ -65,3 +65,66 @@ positions, 05 leaves one open).
   handling exists but is untested against a real partial.
 - No retry loop at all: a connection failure always stops and asks for a broker read.
   `entryRetryPolicy.maxAttempts` is recorded but the engine never retries automatically.
+
+---
+
+# Defect 3 — a filled position could risk more than the configured maximum (fixed)
+
+**Found by measurement, not by inspection.** The engine sized from the mid price, but a
+MARKET order fills at the far side of the spread (ask for a long, bid for a short). The
+realised stop distance was therefore wider than the budgeted one, and **every one of the
+five recorded Practice fills risked more than the configured maximum**:
+
+| trade | instrument | direction | units | broker fill | attached stop | budgeted | realised | over |
+|---|---|---|---|---|---|---|---|---|
+| 5 | EUR_USD | short | 95,419 | 1.11642 | 1.11912 | 250.00 | 257.63 | +3.05% |
+| 15 | EUR_USD | short | 93,445 | 1.11637 | 1.11912 | 249.97 | 256.97 | +2.80% |
+| 25 | GBP_USD | long | 131,888 | 1.33926 | 1.33722 | 249.93 | 269.05 | +7.65% |
+| 33 | EUR_USD | short | 92,706 | 1.11633 | 1.11912 | 249.84 | 258.65 | +3.53% |
+| 43 | GBP_USD | long | 131,474 | 1.33926 | 1.33722 | 249.80 | 268.21 | +7.37% |
+
+Total realised risk 1,310.51 against 1,249.54 budgeted. (0.25% of NAV, the TEST-profile
+value; every figure is recomputed from `orders.jsonl` by `scripts/09-realised-risk.ts`.)
+
+## What changed
+
+- `lib/instruction.ts` — `farSideEntryPrice()` and `sizePosition()` now take the **quote**
+  and size from its far side: ask for a long, bid for a short. The mid is still recorded,
+  never used for sizing. `midBasis` reports what the old code would have submitted, so the
+  two are comparable in the record itself.
+- `lib/engine.ts` — `recheckRiskBeforeSubmit()` runs immediately before the POST and
+  **refuses** the order (`REFUSED_RISK_RECHECK`) if filling at the price available now would
+  risk more than the cap. `recordRealisedRisk()` runs after the fill, on every path that
+  confirms a trade (including adopted-after-a-dropped-connection).
+- `lib/risk.ts` (new) — the measurement half: realised risk from the broker's fill price and
+  the stop the broker reports attached, compared with the budget and the cap.
+- `lib/record.ts` — new record kind `REALISED_RISK`, written next to the budgeted figure.
+  Append-only: five backfill records were appended for the five historical fills, labelled
+  `BACKFILL_FROM_RECORD (postHoc: true)`. No existing line was edited; the hash chain
+  verifies at 153 records.
+- `lib/ops.ts` — `status.json` now carries `risk.breaches`, `risk.unmeasuredCount` and a
+  plain-sentence `alerts[]`, so a breach is surfaced rather than logged.
+
+## Where refusal is possible, and where it is not
+
+- **Before the write: possible, and used.** The pre-submit re-check refuses; nothing is sent.
+- **After the write: not possible.** The entry is MARKET/FOK with protection attached, filled
+  inside the same request. There is no window to cancel, and approved units cannot be
+  re-sized after approval. A fill worse than the far-side price is therefore measured after
+  the fact, recorded, and alerted — not pretended away.
+
+## Proof
+
+`bun test tests/far-side-sizing.test.ts` → **20 pass, 0 fail** (far-side sizing).
+`SIZING_BASIS=mid bun test tests/far-side-sizing.test.ts` → **15 pass, 5 fail**, one failure
+per recorded fill, on the identical assertions. Fixtures are the five real fills above;
+mid-based sizing reproduces every recorded unit count exactly, which is what shows the
+fixtures are the real inputs and not convenient ones.
+
+## Not proven — PENDING MARKET OPEN
+
+FX is closed (Fri 21:00 UTC → Sun 21:00 UTC), so **no fresh fill exists under the fixed
+code**. The fix is proven against the five recorded fills and deterministic calculation. The
+live re-run — one Practice order under `config.test.json`, then `scripts/09-realised-risk.ts
+--report` showing `within` instead of `BREACH` — is **pending**, and must be run after the
+market reopens. It must not be described as done before that.
