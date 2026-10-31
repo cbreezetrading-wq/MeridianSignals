@@ -56,7 +56,7 @@ test("approval, pre-send record and uncertain retry suppression", async () => {
   const i = instruction();
   const preview = await evaluate(client, i, config, resolveSettings(config));
   assert.equal(preview.ok, true, preview.reasons.join("; "));
-  assert.ok(preview.orderPayload.order.priceBound);
+  assert.equal(preview.orderPayload.order.priceBound, "1.10010", "broker price bound must match the far-side sizing basis");
   assert.equal((await submitSignal(client,i,config)).ok, false);
   assert.equal(writes, 0);
   const result = await submitSignal(client,i,config,{approvedPayloadHash:payloadHash(preview.orderPayload)});

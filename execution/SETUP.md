@@ -79,7 +79,7 @@ The adapter accepts broker-primary Practice H1 v1 entry events only, on the newe
 completed bar, within the configured expiry measured from the bar's close. IDs
 remain stable across refreshes. Fallback data, old open-position states and future
 bars cannot become new entries. MARKET/FOK entries have stop and target attached.
-The order carries an adverse price bound, and sizing uses that bound rather than mid.
+The order carries an adverse price bound, set to the executable-side price used for sizing rather than mid. The newer main-branch risk fix, its pre-submit recheck, post-fill risk measurement and breach reporting are preserved.
 
 This connector implements entries with broker stop/target exits. It does **not**
 automate the ruleset's indicator cross/filter exits or reverse positions. Therefore
@@ -121,3 +121,16 @@ bun run build
 
 Do not run the legacy numbered scripts as a generic test suite: several submit or
 close Practice orders and retain original-machine paths. Use the new operator.
+
+## Reconciled with the risk fix
+
+This branch incorporates main commit `26829574d22b72ec107642904e8129370456c394`.
+It preserves executable-side sizing, the immediate pre-submit risk recheck, post-fill
+risk measurement and breach alerts. The console renders those alerts. The entry
+price bound matches the far-side price used for sizing; a worsened price can reject
+the order rather than silently widen the entry risk. This does not guarantee stop
+fills or cap losses through market gaps.
+
+Deploy from this reconciled branch; do not replace the running tree with the old
+`b6d7a89` revision. Confirm the actual deployed source version and keep signals-only
+mode while proving persistent storage and a supervised worker on the target host.

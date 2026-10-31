@@ -49,7 +49,9 @@ export type RecordKind =
   | "PAUSE_CLEARED"
   | "CONTROL_REFUSED"
   | "RECONCILIATION"
-  | "BROKER_STATE_READ";
+  | "BROKER_STATE_READ"
+  /** Realised risk at the broker fill, recorded next to the budgeted figure. */
+  | "REALISED_RISK";
 
 export type ExecutionRecord = {
   seq: number;

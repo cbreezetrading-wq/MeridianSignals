@@ -37,6 +37,7 @@ function Execution() {
     <p className="text-xs text-slate-500">The key stays in this page’s memory. Account credentials remain on the server. Status is a snapshot; refresh before relying on it.</p>
     {message && <p role="status" className="rounded border p-4">{message}</p>}
     {data && <>
+      {!!data.status.alerts?.length && <section role="alert" className="rounded border border-red-400 bg-red-50 p-4"><h2 className="font-semibold">Risk and record alerts</h2><ul className="list-disc space-y-2 pl-5">{data.status.alerts.map((alert: string, index: number) => <li key={index}>{alert}</li>)}</ul></section>}
       <section className="rounded border p-4"><h2 className="font-semibold">Connection and controls</h2>
         <p>Mode: {data.status.mode.current} · Entries: {data.status.pause.paused ? "Paused" : "Not paused"}</p>
         <p>Broker: {data.status.broker.ok ? "Available" : "Unavailable"} · Read at {data.status.broker.readAt}</p>
