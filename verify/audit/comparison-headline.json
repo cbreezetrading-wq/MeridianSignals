@@ -1,0 +1,45 @@
+{
+ "summary": [
+  {
+   "pair": "EUR_USD",
+   "theirs": 961,
+   "ours": 961,
+   "matched": 961,
+   "unmatched_theirs": 0,
+   "field_mismatches": 0
+  },
+  {
+   "pair": "GBP_USD",
+   "theirs": 943,
+   "ours": 943,
+   "matched": 943,
+   "unmatched_theirs": 0,
+   "field_mismatches": 0
+  },
+  {
+   "pair": "USD_JPY",
+   "theirs": 940,
+   "ours": 939,
+   "matched": 939,
+   "unmatched_theirs": 1,
+   "field_mismatches": 0
+  },
+  {
+   "pair": "AUD_USD",
+   "theirs": 946,
+   "ours": 946,
+   "matched": 946,
+   "unmatched_theirs": 0,
+   "field_mismatches": 0
+  }
+ ],
+ "mismatches": [],
+ "unmatched_theirs": [
+  {
+   "pair": "USD/JPY",
+   "trigger": "2026-10-09T09:00:00.000Z",
+   "reason": "still-open-at-data-end",
+   "pips": null
+  }
+ ]
+}
