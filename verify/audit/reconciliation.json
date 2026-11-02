@@ -1,0 +1,1466 @@
+{
+ "aggregates": [
+  {
+   "variant": "headline",
+   "metric": "trades",
+   "ours": 3789,
+   "theirs": 3789,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "metric": "wins",
+   "ours": 1225,
+   "theirs": 1225,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "metric": "losses",
+   "ours": 2564,
+   "theirs": 2564,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "metric": "win_rate_pct",
+   "ours": 32.33,
+   "theirs": 32.3,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "metric": "total_pips",
+   "ours": -4241.0,
+   "theirs": -4241,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "metric": "total_r",
+   "ours": -197.6,
+   "theirs": -197.58,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "metric": "avg_r",
+   "ours": -0.0521,
+   "theirs": -0.052,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "metric": "profit_factor",
+   "ours": 0.94,
+   "theirs": 0.94,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "metric": "max_dd_pips",
+   "ours": 5988.5,
+   "theirs": 5988.5,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "metric": "max_dd_r",
+   "ours": 208.8,
+   "theirs": 208.76,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "metric": "longest_losing_streak",
+   "ours": 24,
+   "theirs": 24,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "metric": "avg_win_pips",
+   "ours": 56.92,
+   "theirs": 56.9,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "metric": "avg_loss_pips",
+   "ours": -28.85,
+   "theirs": -28.8,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "metric": "expectancy_pips",
+   "ours": -1.12,
+   "theirs": -1.12,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "EUR/USD",
+   "metric": "trades",
+   "ours": 961,
+   "theirs": 961,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "EUR/USD",
+   "metric": "total_pips",
+   "ours": -739.2,
+   "theirs": -739.2,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "EUR/USD",
+   "metric": "total_r",
+   "ours": -36.6,
+   "theirs": -36.62,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "pair": "EUR/USD",
+   "metric": "win_rate_pct",
+   "ours": 32.47,
+   "theirs": 32.5,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "pair": "EUR/USD",
+   "metric": "profit_factor",
+   "ours": 0.96,
+   "theirs": 0.96,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "EUR/USD",
+   "metric": "max_dd_pips",
+   "ours": 1362.2,
+   "theirs": 1362.2,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "EUR/USD",
+   "metric": "longest_losing_streak",
+   "ours": 19,
+   "theirs": 19,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "EUR/USD",
+   "metric": "wins",
+   "ours": 312,
+   "theirs": 312,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "GBP/USD",
+   "metric": "trades",
+   "ours": 943,
+   "theirs": 943,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "GBP/USD",
+   "metric": "total_pips",
+   "ours": -3728.8,
+   "theirs": -3728.8,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "GBP/USD",
+   "metric": "total_r",
+   "ours": -103.8,
+   "theirs": -103.83,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "pair": "GBP/USD",
+   "metric": "win_rate_pct",
+   "ours": 30.43,
+   "theirs": 30.4,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "pair": "GBP/USD",
+   "metric": "profit_factor",
+   "ours": 0.84,
+   "theirs": 0.84,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "GBP/USD",
+   "metric": "max_dd_pips",
+   "ours": 4140.2,
+   "theirs": 4140.2,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "GBP/USD",
+   "metric": "longest_losing_streak",
+   "ours": 14,
+   "theirs": 14,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "GBP/USD",
+   "metric": "wins",
+   "ours": 287,
+   "theirs": 287,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "USD/JPY",
+   "metric": "trades",
+   "ours": 939,
+   "theirs": 939,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "USD/JPY",
+   "metric": "total_pips",
+   "ours": 51.1,
+   "theirs": 51.1,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "USD/JPY",
+   "metric": "total_r",
+   "ours": -27.2,
+   "theirs": -27.19,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "pair": "USD/JPY",
+   "metric": "win_rate_pct",
+   "ours": 33.23,
+   "theirs": 33.2,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "pair": "USD/JPY",
+   "metric": "profit_factor",
+   "ours": 1.0,
+   "theirs": 1,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "USD/JPY",
+   "metric": "max_dd_pips",
+   "ours": 2066.1,
+   "theirs": 2066.1,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "USD/JPY",
+   "metric": "longest_losing_streak",
+   "ours": 16,
+   "theirs": 16,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "USD/JPY",
+   "metric": "wins",
+   "ours": 312,
+   "theirs": 312,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "AUD/USD",
+   "metric": "trades",
+   "ours": 946,
+   "theirs": 946,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "AUD/USD",
+   "metric": "total_pips",
+   "ours": 175.9,
+   "theirs": 175.9,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "AUD/USD",
+   "metric": "total_r",
+   "ours": -29.9,
+   "theirs": -29.93,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "pair": "AUD/USD",
+   "metric": "win_rate_pct",
+   "ours": 33.19,
+   "theirs": 33.2,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "pair": "AUD/USD",
+   "metric": "profit_factor",
+   "ours": 1.01,
+   "theirs": 1.01,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "AUD/USD",
+   "metric": "max_dd_pips",
+   "ours": 1688.3,
+   "theirs": 1688.3,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "AUD/USD",
+   "metric": "longest_losing_streak",
+   "ours": 14,
+   "theirs": 14,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "pair": "AUD/USD",
+   "metric": "wins",
+   "ours": 314,
+   "theirs": 314,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "window": "holdout",
+   "metric": "trades",
+   "ours": 173,
+   "theirs": 173,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "window": "holdout",
+   "metric": "total_pips",
+   "ours": -819.0,
+   "theirs": -819,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "window": "holdout",
+   "metric": "total_r",
+   "ours": -30.5,
+   "theirs": -30.54,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "window": "holdout",
+   "metric": "win_rate_pct",
+   "ours": 28.32,
+   "theirs": 28.3,
+   "match": false
+  },
+  {
+   "variant": "headline",
+   "window": "holdout",
+   "metric": "profit_factor",
+   "ours": 0.7,
+   "theirs": 0.7,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "window": "holdout",
+   "metric": "max_dd_pips",
+   "ours": 819.0,
+   "theirs": 819,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "window": "holdout",
+   "metric": "longest_losing_streak",
+   "ours": 15,
+   "theirs": 15,
+   "match": true
+  },
+  {
+   "variant": "headline",
+   "window": "holdout",
+   "metric": "wins",
+   "ours": 49,
+   "theirs": 49,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "metric": "trades",
+   "ours": 3789,
+   "theirs": 3789,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "metric": "wins",
+   "ours": 1274,
+   "theirs": 1416,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "losses",
+   "ours": 2515,
+   "theirs": 2373,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "win_rate_pct",
+   "ours": 33.62,
+   "theirs": 37.4,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "total_pips",
+   "ours": 3785.2,
+   "theirs": 4289.1,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "total_r",
+   "ours": 121.2,
+   "theirs": 125.47,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "avg_r",
+   "ours": 0.032,
+   "theirs": 0.033,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "profit_factor",
+   "ours": 1.05,
+   "theirs": 1.07,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "max_dd_pips",
+   "ours": 1955.3,
+   "theirs": 1463.2,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "max_dd_r",
+   "ours": 57.1,
+   "theirs": 49.03,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "longest_losing_streak",
+   "ours": 17,
+   "theirs": 16,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "avg_win_pips",
+   "ours": 57.69,
+   "theirs": 47.5,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "avg_loss_pips",
+   "ours": -27.72,
+   "theirs": -26.5,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "metric": "expectancy_pips",
+   "ours": 1.0,
+   "theirs": 1.13,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "EUR/USD",
+   "metric": "trades",
+   "ours": 961,
+   "theirs": 961,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "pair": "EUR/USD",
+   "metric": "total_pips",
+   "ours": 928.0,
+   "theirs": 1005.9,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "EUR/USD",
+   "metric": "total_r",
+   "ours": 37.3,
+   "theirs": 38.75,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "EUR/USD",
+   "metric": "win_rate_pct",
+   "ours": 33.71,
+   "theirs": 37.3,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "EUR/USD",
+   "metric": "profit_factor",
+   "ours": 1.05,
+   "theirs": 1.06,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "EUR/USD",
+   "metric": "max_dd_pips",
+   "ours": 1066.6,
+   "theirs": 1133,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "EUR/USD",
+   "metric": "longest_losing_streak",
+   "ours": 19,
+   "theirs": 19,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "pair": "EUR/USD",
+   "metric": "wins",
+   "ours": 324,
+   "theirs": 358,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "GBP/USD",
+   "metric": "trades",
+   "ours": 943,
+   "theirs": 943,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "pair": "GBP/USD",
+   "metric": "total_pips",
+   "ours": -610.2,
+   "theirs": 212.2,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "GBP/USD",
+   "metric": "total_r",
+   "ours": -3.6,
+   "theirs": 13.58,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "GBP/USD",
+   "metric": "win_rate_pct",
+   "ours": 32.56,
+   "theirs": 36.6,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "GBP/USD",
+   "metric": "profit_factor",
+   "ours": 0.97,
+   "theirs": 1.01,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "GBP/USD",
+   "metric": "max_dd_pips",
+   "ours": 2351.0,
+   "theirs": 1426.9,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "GBP/USD",
+   "metric": "longest_losing_streak",
+   "ours": 14,
+   "theirs": 10,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "GBP/USD",
+   "metric": "wins",
+   "ours": 307,
+   "theirs": 345,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "USD/JPY",
+   "metric": "trades",
+   "ours": 939,
+   "theirs": 939,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "pair": "USD/JPY",
+   "metric": "total_pips",
+   "ours": 1549.8,
+   "theirs": 1751.3,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "USD/JPY",
+   "metric": "total_r",
+   "ours": 40.4,
+   "theirs": 45.36,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "USD/JPY",
+   "metric": "win_rate_pct",
+   "ours": 33.97,
+   "theirs": 37.7,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "USD/JPY",
+   "metric": "profit_factor",
+   "ours": 1.1,
+   "theirs": 1.12,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "USD/JPY",
+   "metric": "max_dd_pips",
+   "ours": 1726.1,
+   "theirs": 1363.7,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "USD/JPY",
+   "metric": "longest_losing_streak",
+   "ours": 16,
+   "theirs": 12,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "USD/JPY",
+   "metric": "wins",
+   "ours": 319,
+   "theirs": 354,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "AUD/USD",
+   "metric": "trades",
+   "ours": 946,
+   "theirs": 946,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "pair": "AUD/USD",
+   "metric": "total_pips",
+   "ours": 1917.5,
+   "theirs": 1319.6,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "AUD/USD",
+   "metric": "total_r",
+   "ours": 47.1,
+   "theirs": 27.78,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "AUD/USD",
+   "metric": "win_rate_pct",
+   "ours": 34.25,
+   "theirs": 37.9,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "AUD/USD",
+   "metric": "profit_factor",
+   "ours": 1.13,
+   "theirs": 1.1,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "AUD/USD",
+   "metric": "max_dd_pips",
+   "ours": 928.8,
+   "theirs": 1025.1,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "pair": "AUD/USD",
+   "metric": "longest_losing_streak",
+   "ours": 14,
+   "theirs": 14,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "pair": "AUD/USD",
+   "metric": "wins",
+   "ours": 324,
+   "theirs": 359,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "window": "holdout",
+   "metric": "trades",
+   "ours": 173,
+   "theirs": 173,
+   "match": true
+  },
+  {
+   "variant": "zero",
+   "window": "holdout",
+   "metric": "total_pips",
+   "ours": -367.2,
+   "theirs": -225.2,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "window": "holdout",
+   "metric": "total_r",
+   "ours": -8.9,
+   "theirs": -1.83,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "window": "holdout",
+   "metric": "win_rate_pct",
+   "ours": 30.64,
+   "theirs": 34.7,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "window": "holdout",
+   "metric": "profit_factor",
+   "ours": 0.85,
+   "theirs": 0.9,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "window": "holdout",
+   "metric": "max_dd_pips",
+   "ours": 502.5,
+   "theirs": 381.5,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "window": "holdout",
+   "metric": "longest_losing_streak",
+   "ours": 15,
+   "theirs": 10,
+   "match": false
+  },
+  {
+   "variant": "zero",
+   "window": "holdout",
+   "metric": "wins",
+   "ours": 53,
+   "theirs": 60,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "trades",
+   "ours": 3789,
+   "theirs": 3789,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "metric": "wins",
+   "ours": 1274,
+   "theirs": 1275,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "losses",
+   "ours": 2515,
+   "theirs": 2514,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "win_rate_pct",
+   "ours": 33.62,
+   "theirs": 33.7,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "total_pips",
+   "ours": 3421.6,
+   "theirs": 3416.2,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "total_r",
+   "ours": 115.9,
+   "theirs": 115.74,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "avg_r",
+   "ours": 0.0306,
+   "theirs": 0.031,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "profit_factor",
+   "ours": 1.05,
+   "theirs": 1.05,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "metric": "max_dd_pips",
+   "ours": 1986.0,
+   "theirs": 1986.7,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "max_dd_r",
+   "ours": 58.1,
+   "theirs": 58.17,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "longest_losing_streak",
+   "ours": 17,
+   "theirs": 17,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "metric": "avg_win_pips",
+   "ours": 57.98,
+   "theirs": 57.9,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "avg_loss_pips",
+   "ours": -28.01,
+   "theirs": -28,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "metric": "expectancy_pips",
+   "ours": 0.9,
+   "theirs": 0.9,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "EUR/USD",
+   "metric": "trades",
+   "ours": 961,
+   "theirs": 961,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "EUR/USD",
+   "metric": "total_pips",
+   "ours": 961.4,
+   "theirs": 961.6,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "EUR/USD",
+   "metric": "total_r",
+   "ours": 37.6,
+   "theirs": 37.7,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "EUR/USD",
+   "metric": "win_rate_pct",
+   "ours": 33.71,
+   "theirs": 33.7,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "EUR/USD",
+   "metric": "profit_factor",
+   "ours": 1.05,
+   "theirs": 1.05,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "EUR/USD",
+   "metric": "max_dd_pips",
+   "ours": 1065.4,
+   "theirs": 1065,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "EUR/USD",
+   "metric": "longest_losing_streak",
+   "ours": 19,
+   "theirs": 19,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "EUR/USD",
+   "metric": "wins",
+   "ours": 324,
+   "theirs": 324,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "GBP/USD",
+   "metric": "trades",
+   "ours": 943,
+   "theirs": 943,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "GBP/USD",
+   "metric": "total_pips",
+   "ours": -859.7,
+   "theirs": -860.5,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "GBP/USD",
+   "metric": "total_r",
+   "ours": -6.0,
+   "theirs": -6.03,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "GBP/USD",
+   "metric": "win_rate_pct",
+   "ours": 32.56,
+   "theirs": 32.6,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "GBP/USD",
+   "metric": "profit_factor",
+   "ours": 0.96,
+   "theirs": 0.96,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "GBP/USD",
+   "metric": "max_dd_pips",
+   "ours": 2391.1,
+   "theirs": 2394.2,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "GBP/USD",
+   "metric": "longest_losing_streak",
+   "ours": 14,
+   "theirs": 14,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "GBP/USD",
+   "metric": "wins",
+   "ours": 307,
+   "theirs": 307,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "USD/JPY",
+   "metric": "trades",
+   "ours": 939,
+   "theirs": 939,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "USD/JPY",
+   "metric": "total_pips",
+   "ours": 1506.7,
+   "theirs": 1504.2,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "USD/JPY",
+   "metric": "total_r",
+   "ours": 37.9,
+   "theirs": 37.79,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "USD/JPY",
+   "metric": "win_rate_pct",
+   "ours": 33.97,
+   "theirs": 34.1,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "USD/JPY",
+   "metric": "profit_factor",
+   "ours": 1.09,
+   "theirs": 1.09,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "USD/JPY",
+   "metric": "max_dd_pips",
+   "ours": 1788.4,
+   "theirs": 1791.4,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "USD/JPY",
+   "metric": "longest_losing_streak",
+   "ours": 16,
+   "theirs": 16,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "USD/JPY",
+   "metric": "wins",
+   "ours": 319,
+   "theirs": 320,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "AUD/USD",
+   "metric": "trades",
+   "ours": 946,
+   "theirs": 946,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "AUD/USD",
+   "metric": "total_pips",
+   "ours": 1813.1,
+   "theirs": 1810.8,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "AUD/USD",
+   "metric": "total_r",
+   "ours": 46.4,
+   "theirs": 46.27,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "AUD/USD",
+   "metric": "win_rate_pct",
+   "ours": 34.25,
+   "theirs": 34.2,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "AUD/USD",
+   "metric": "profit_factor",
+   "ours": 1.13,
+   "theirs": 1.13,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "AUD/USD",
+   "metric": "max_dd_pips",
+   "ours": 905.6,
+   "theirs": 908.9,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "pair": "AUD/USD",
+   "metric": "longest_losing_streak",
+   "ours": 14,
+   "theirs": 14,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "pair": "AUD/USD",
+   "metric": "wins",
+   "ours": 324,
+   "theirs": 324,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "window": "holdout",
+   "metric": "trades",
+   "ours": 173,
+   "theirs": 173,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "window": "holdout",
+   "metric": "total_pips",
+   "ours": -374.7,
+   "theirs": -374.7,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "window": "holdout",
+   "metric": "total_r",
+   "ours": -9.0,
+   "theirs": -9.02,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "window": "holdout",
+   "metric": "win_rate_pct",
+   "ours": 30.64,
+   "theirs": 30.6,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "window": "holdout",
+   "metric": "profit_factor",
+   "ours": 0.85,
+   "theirs": 0.85,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "window": "holdout",
+   "metric": "max_dd_pips",
+   "ours": 508.6,
+   "theirs": 515.8,
+   "match": false
+  },
+  {
+   "variant": "optimistic",
+   "window": "holdout",
+   "metric": "longest_losing_streak",
+   "ours": 15,
+   "theirs": 15,
+   "match": true
+  },
+  {
+   "variant": "optimistic",
+   "window": "holdout",
+   "metric": "wins",
+   "ours": 53,
+   "theirs": 53,
+   "match": true
+  }
+ ],
+ "data_facts": {
+  "EUR_USD": {
+   "bars": 138999,
+   "first_bar_utc": "2002-05-06T20:00",
+   "last_bar_utc": "2026-10-12T16:00",
+   "bars_with_gap_gt_1h_in_first_300": 298,
+   "index_where_series_becomes_hourly": 885,
+   "utc_at_that_index": "2005-01-04T09:00",
+   "bar_at_index_200_utc": "2002-12-23T20:00"
+  },
+  "GBP_USD": {
+   "bars": 138789,
+   "first_bar_utc": "2002-05-06T20:00",
+   "last_bar_utc": "2026-10-12T16:00",
+   "bars_with_gap_gt_1h_in_first_300": 300,
+   "index_where_series_becomes_hourly": 870,
+   "utc_at_that_index": "2005-01-04T10:00",
+   "bar_at_index_200_utc": "2002-12-27T20:00"
+  },
+  "USD_JPY": {
+   "bars": 138900,
+   "first_bar_utc": "2002-05-06T20:00",
+   "last_bar_utc": "2026-10-12T16:00",
+   "bars_with_gap_gt_1h_in_first_300": 299,
+   "index_where_series_becomes_hourly": 875,
+   "utc_at_that_index": "2005-01-04T09:00",
+   "bar_at_index_200_utc": "2002-12-25T19:00"
+  },
+  "AUD_USD": {
+   "bars": 138816,
+   "first_bar_utc": "2002-05-06T20:00",
+   "last_bar_utc": "2026-10-12T16:00",
+   "bars_with_gap_gt_1h_in_first_300": 295,
+   "index_where_series_becomes_hourly": 869,
+   "utc_at_that_index": "2005-01-04T09:00",
+   "bar_at_index_200_utc": "2002-12-30T04:00"
+  }
+ },
+ "year_by_year": [
+  {
+   "year": "2003",
+   "ours_trades": 9,
+   "ours_pips": 525.0,
+   "theirs_trades": 9,
+   "theirs_pips": 525
+  },
+  {
+   "year": "2004",
+   "ours_trades": 13,
+   "ours_pips": -478.3,
+   "theirs_trades": 13,
+   "theirs_pips": -478.3
+  },
+  {
+   "year": "2005",
+   "ours_trades": 160,
+   "ours_pips": -621.9,
+   "theirs_trades": 159,
+   "theirs_pips": -589.9
+  },
+  {
+   "year": "2006",
+   "ours_trades": 168,
+   "ours_pips": -542.2,
+   "theirs_trades": 169,
+   "theirs_pips": -574.3
+  },
+  {
+   "year": "2007",
+   "ours_trades": 172,
+   "ours_pips": -365.4,
+   "theirs_trades": 171,
+   "theirs_pips": -477.4
+  },
+  {
+   "year": "2008",
+   "ours_trades": 191,
+   "ours_pips": -805.5,
+   "theirs_trades": 191,
+   "theirs_pips": -749.8
+  },
+  {
+   "year": "2009",
+   "ours_trades": 181,
+   "ours_pips": -748.0,
+   "theirs_trades": 181,
+   "theirs_pips": -648.8
+  },
+  {
+   "year": "2010",
+   "ours_trades": 184,
+   "ours_pips": 511.8,
+   "theirs_trades": 185,
+   "theirs_pips": 468.9
+  },
+  {
+   "year": "2011",
+   "ours_trades": 197,
+   "ours_pips": 14.6,
+   "theirs_trades": 197,
+   "theirs_pips": 14.6
+  },
+  {
+   "year": "2012",
+   "ours_trades": 178,
+   "ours_pips": 117.9,
+   "theirs_trades": 178,
+   "theirs_pips": 117.9
+  },
+  {
+   "year": "2013",
+   "ours_trades": 172,
+   "ours_pips": -420.3,
+   "theirs_trades": 171,
+   "theirs_pips": -403
+  },
+  {
+   "year": "2014",
+   "ours_trades": 159,
+   "ours_pips": -276.3,
+   "theirs_trades": 160,
+   "theirs_pips": -293.6
+  },
+  {
+   "year": "2015",
+   "ours_trades": 176,
+   "ours_pips": -591.8,
+   "theirs_trades": 176,
+   "theirs_pips": -591.8
+  },
+  {
+   "year": "2016",
+   "ours_trades": 162,
+   "ours_pips": -352.1,
+   "theirs_trades": 162,
+   "theirs_pips": -352.1
+  },
+  {
+   "year": "2017",
+   "ours_trades": 162,
+   "ours_pips": 767.4,
+   "theirs_trades": 162,
+   "theirs_pips": 767.4
+  },
+  {
+   "year": "2018",
+   "ours_trades": 168,
+   "ours_pips": -355.6,
+   "theirs_trades": 166,
+   "theirs_pips": -447.5
+  },
+  {
+   "year": "2019",
+   "ours_trades": 169,
+   "ours_pips": -767.6,
+   "theirs_trades": 171,
+   "theirs_pips": -675.7
+  },
+  {
+   "year": "2020",
+   "ours_trades": 151,
+   "ours_pips": -489.7,
+   "theirs_trades": 151,
+   "theirs_pips": -489.7
+  },
+  {
+   "year": "2021",
+   "ours_trades": 177,
+   "ours_pips": -128.5,
+   "theirs_trades": 176,
+   "theirs_pips": -104.6
+  },
+  {
+   "year": "2022",
+   "ours_trades": 179,
+   "ours_pips": 1279.5,
+   "theirs_trades": 180,
+   "theirs_pips": 1255.6
+  },
+  {
+   "year": "2023",
+   "ours_trades": 175,
+   "ours_pips": 686.3,
+   "theirs_trades": 175,
+   "theirs_pips": 686.3
+  },
+  {
+   "year": "2024",
+   "ours_trades": 182,
+   "ours_pips": 138.1,
+   "theirs_trades": 181,
+   "theirs_pips": 86.5
+  },
+  {
+   "year": "2025",
+   "ours_trades": 165,
+   "ours_pips": -629.4,
+   "theirs_trades": 165,
+   "theirs_pips": -629.7
+  },
+  {
+   "year": "2026",
+   "ours_trades": 139,
+   "ours_pips": -709.0,
+   "theirs_trades": 140,
+   "theirs_pips": -657.1
+  }
+ ]
+}
