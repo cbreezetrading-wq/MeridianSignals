@@ -48,7 +48,7 @@ const FALLBACK_DELAY_NOTE =
   "a free public source that labels its FX quotes as delayed — it is 30–105 seconds behind the broker feed in our measurements, and it is used only when the broker feed fails";
 
 const DISCLAIMER =
-  "These are algorithmic technical signals from the ruleset written down in /home/team/shared/ruleset.md. They are shown for the owner's own reading and decisions. They are not advice, not a recommendation, and not an order — and no performance, accuracy or win rate has been measured for them yet. The bars are hourly broker bars, not a tick quote, and only bars the broker has flagged complete are used. The bid/ask beside each signal is an indicative quote from the owner's own account (practice unless stated) and is shown as a cost input only — it is not a fill, not a tradable guarantee and not a performance figure.";
+  "These are algorithmic technical signals from the ruleset written down in /home/team/shared/ruleset.md. They are shown for the owner's own reading and decisions. They are not advice, not a recommendation, and not an order — and the stored hourly and daily backtests both report losses. The bars are hourly broker bars, not a tick quote, and only bars the broker has flagged complete are used. The bid/ask beside each signal is an indicative quote from the owner's own account (practice unless stated) and is shown as a cost input only — it is not a fill, not a tradable guarantee and not a performance figure.";
 
 /** One provider attempt on one pair, kept so a failure can be shown with its reason. */
 type Attempt = {

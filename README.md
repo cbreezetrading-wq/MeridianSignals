@@ -1,5 +1,17 @@
 # Meridian Signals
 
+## Current integration update
+
+The Practice execution console and backend watcher are now implemented in source.
+See [execution/SETUP.md](execution/SETUP.md) for deployment, secrets, activation,
+verification and known limitations. This update is not a CTO deployment or a broker
+connection confirmation. The default remains signals-only. Live trading is disabled.
+
+Current gaps include indicator exits, complete broker daily P/L and cross-currency
+portfolio exposure accounting. Do not treat the execution layer as live-ready. The
+older handoff below describes the original build; SETUP.md supersedes it for the
+new console and operator.
+
 A personal FX trading system for one person, run against their own OANDA account.
 It watches prices on four major pairs, applies one fully specified ruleset to closed
 bars, decides whether a trade qualifies, and — once enabled in Practice — turns a
@@ -109,7 +121,7 @@ This is the part that touches money, so the limits are in the code rather than b
 - **Protection rides in the same request as the entry**, so a stop cannot be lost between
   submission and fill. If a filled position lacks its required protection, a predefined
   recovery policy runs and the problem is reported prominently.
-- **Duplicates are impossible by construction.** Each signal carries a stable idempotency
+- **Submissions are serialized on one shared filesystem.** Each signal carries a stable idempotency
   key; resubmitting it cannot create a second order. After a timeout or a lost connection
   the system re-reads broker state before retrying.
 - **Unverifiable state stops new entries.** If prices, account state or protective-order

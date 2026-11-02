@@ -15,11 +15,11 @@
  */
 
 import type { Client, BrokerResponse, BrokerFailure } from "./client.ts";
-import { appendRecord, replay } from "./record.ts";
+import { RECORD_PATH, appendRecord, replay } from "./record.ts";
 import { readAccount, readPause, writePause, isManaged, managedTradeIdsFromRecord, MERIDIAN_TAG } from "./engine.ts";
 import { riskBreachesFromRecord } from "./risk.ts";
 import type { AccountSnapshot } from "./engine.ts";
-import { resolveSettings, type ExecutionConfig, type ResolvedSettings } from "./config.ts";
+import { resolveSettings, type ExecutionConfig } from "./config.ts";
 import { PRACTICE_HOST } from "./interlock.ts";
 
 type ExecutionConfigLike = ExecutionConfig;
@@ -526,7 +526,7 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
       errors: broker.errors,
     },
     orders: orders.slice(0, 25),
-    record: { path: "/home/team/shared/execution/orders.jsonl", records: chain.recordCount, chainOk: chain.ok },
+    record: { path: RECORD_PATH, records: chain.recordCount, chainOk: chain.ok },
     latency: {
       lastRoundTripMs: trips.length ? trips[trips.length - 1]! : null,
       lastInstructionToAckMs: i2a.length ? i2a[i2a.length - 1]! : null,

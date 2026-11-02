@@ -66,3 +66,6 @@ verify/
 # ------------------------------------------------------------------ editor / OS
 .DS_Store
 *.swp
+
+execution/pending-instructions.json
+execution/submission.lock/
