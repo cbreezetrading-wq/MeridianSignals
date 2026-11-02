@@ -2,6 +2,25 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
 export const Route = createFileRoute("/execution")({ component: Execution });
+
+/** Where a risk setting's value came from. DEMO TEST is its own label, never shown as OWNER. */
+function SourceBadge({ source }: { source: string }) {
+  const style =
+    source === "OWNER" ? "bg-emerald-100 text-emerald-900 border-emerald-400"
+    : source === "DEMO-TEST" ? "bg-violet-100 text-violet-900 border-violet-500"
+    : source === "TEST" ? "bg-amber-100 text-amber-900 border-amber-400"
+    : "bg-red-100 text-red-900 border-red-400";
+  const text = source === "DEMO-TEST" ? "DEMO TEST" : source;
+  return <span className={`whitespace-nowrap rounded border px-2 py-0.5 text-xs font-semibold ${style}`}>{text}</span>;
+}
+
+function renderSettingValue(value: unknown): string {
+  if (value === null || value === undefined) return "not set";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
 function Execution() {
   const [key, setKey] = useState("");
   const [data, setData] = useState<any>(null);
@@ -38,6 +57,30 @@ function Execution() {
     {message && <p role="status" className="rounded border p-4">{message}</p>}
     {data && <>
       {!!data.status.alerts?.length && <section role="alert" className="rounded border border-red-400 bg-red-50 p-4"><h2 className="font-semibold">Risk and record alerts</h2><ul className="list-disc space-y-2 pl-5">{data.status.alerts.map((alert: string, index: number) => <li key={index}>{alert}</li>)}</ul></section>}
+      {!!data.status.settingsProfile?.demoTestProfileInUse && <section role="note" className="rounded border-2 border-violet-500 bg-violet-50 p-4 text-sm">
+        <h2 className="font-semibold">DEMO TEST profile active — these are not the owner’s risk settings</h2>
+        <p className="mt-1">{data.status.settingsProfile.note}</p>
+        <p className="mt-2 text-xs">Every value below is labelled DEMO TEST, not OWNER. The profile cannot change the trading host, the mode, or automatic execution: the mode is {data.status.mode.current}, automatic is not acknowledged, and no strategy is enabled.</p>
+      </section>}
+      {data.status.entryGate && <section role="status" className={`rounded border-2 p-4 text-sm ${data.status.entryGate.allowed === true ? "border-slate-300 bg-slate-50" : "border-red-400 bg-red-50"}`}>
+        <h2 className="font-semibold">New entries right now</h2>
+        {data.status.entryGate.allowed === true && <p className="mt-1">The position-count guard does not refuse a new entry right now: {data.status.entryGate.managedOpenPositions} Meridian-managed position(s) open. Other guards (spread, trading time, entry deviation, daily loss) are applied when an order is actually evaluated.</p>}
+        {!!data.status.entryGate.refusals?.length && <ul className="mt-1 list-disc space-y-2 pl-5">
+          {data.status.entryGate.refusals.map((r: any, index: number) => <li key={index}>
+            <p>{r.message}</p>
+            <p className="text-xs">Produced by setting <code className="font-semibold">{r.setting}</code> = {renderSettingValue(r.settingValue)} <SourceBadge source={r.settingSource} /> · guard {r.guard} · broker state read at {data.status.entryGate.checkedAt}</p>
+          </li>)}
+        </ul>}
+      </section>}
+      <section className="rounded border p-4"><h2 className="text-xl font-semibold">Risk and control settings</h2>
+        <p className="text-xs text-slate-600">Each value carries the label of where it came from. DEMO TEST values are the owner’s direction for a Practice demo run, not a statement of their risk appetite; OWNER means the owner supplied it; UNSET means nothing trades on it.</p>
+        <table className="mt-2 w-full text-left text-sm"><thead><tr><th className="py-1">Setting</th><th className="py-1">Value</th><th className="py-1">Label</th></tr></thead>
+          <tbody>{data.status.settings.map((s: any) => <tr key={s.key} className="border-t align-top">
+            <td className="py-1 pr-3 font-mono text-xs">{s.key}</td>
+            <td className="py-1 pr-3 break-words">{renderSettingValue(s.value)}</td>
+            <td className="py-1"><SourceBadge source={s.source} /></td>
+          </tr>)}</tbody></table>
+      </section>
       <section className="rounded border p-4"><h2 className="font-semibold">Connection and controls</h2>
         <p>Mode: {data.status.mode.current} · Entries: {data.status.pause.paused ? "Paused" : "Not paused"}</p>
         <p>Broker: {data.status.broker.ok ? "Available" : "Unavailable"} · Read at {data.status.broker.readAt}</p>

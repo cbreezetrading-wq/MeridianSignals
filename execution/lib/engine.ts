@@ -27,6 +27,7 @@ import {
   type ResolvedSettings,
   resolveSettings,
   TEST_PROFILE,
+  DEMO_TEST_LABEL,
 } from "./config.ts";
 import {
   validateInstruction,
@@ -290,12 +291,11 @@ export async function readQuotes(client: Client, instruments: string[]): Promise
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 
-import { EXECUTION_DIR, executionPath } from "./paths.ts";
-export const PAUSE_PATH = executionPath("pause.json");
+import { executionDir, pausePath, dayStatePath } from "./paths.ts";
 
 export async function readPause(): Promise<{ paused: boolean; reason: string | null; setAt: string | null }> {
   try {
-    const raw = JSON.parse(await readFile(PAUSE_PATH, "utf8"));
+    const raw = JSON.parse(await readFile(pausePath(), "utf8"));
     return { paused: raw.paused === true, reason: raw.reason ?? null, setAt: raw.setAt ?? null };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { paused: false, reason: null, setAt: null };
@@ -304,24 +304,22 @@ export async function readPause(): Promise<{ paused: boolean; reason: string | n
 }
 
 export async function writePause(paused: boolean, reason: string | null): Promise<void> {
-  await mkdir(EXECUTION_DIR, { recursive: true });
-  await writeFile(PAUSE_PATH, JSON.stringify({ paused, reason, setAt: new Date().toISOString() }, null, 2), "utf8");
+  await mkdir(executionDir(), { recursive: true });
+  await writeFile(pausePath(), JSON.stringify({ paused, reason, setAt: new Date().toISOString() }, null, 2), "utf8");
 }
 
 /* -------------------------------------------------------------- daily state */
 
-export const DAY_STATE_PATH = executionPath("day-state.json");
-
 export async function dayStartNav(nav: number): Promise<{ date: string; nav: number }> {
   const today = new Date().toISOString().slice(0, 10);
   try {
-    const raw = JSON.parse(await readFile(DAY_STATE_PATH, "utf8"));
+    const raw = JSON.parse(await readFile(dayStatePath(), "utf8"));
     if (raw.date === today && Number.isFinite(raw.nav)) return { date: today, nav: raw.nav };
   } catch {
     /* fall through */
   }
-  await mkdir(EXECUTION_DIR, { recursive: true });
-  await writeFile(DAY_STATE_PATH, JSON.stringify({ date: today, nav }, null, 2), "utf8");
+  await mkdir(executionDir(), { recursive: true });
+  await writeFile(dayStatePath(), JSON.stringify({ date: today, nav }, null, 2), "utf8");
   return { date: today, nav };
 }
 
@@ -610,6 +608,9 @@ export async function evaluate(
     mode: settings.mode,
     modeSource: settings.modeSource,
     testProfile: settings.testProfileInUse,
+    /** Which label supplied the risk settings that produced this order: OWNER, DEMO-TEST or TEST. */
+    settingsProfile: settings.profileLabel,
+    settingsProfileLabel: settings.profileLabel === "DEMO-TEST" ? DEMO_TEST_LABEL : settings.profileLabel,
     origin: instruction.origin,
     strategy: { id: strategy.id, version: strategy.version, label: strategy.label, enabled: strategy.enabled, note: strategy.note },
     instrument: instruction.instrument,

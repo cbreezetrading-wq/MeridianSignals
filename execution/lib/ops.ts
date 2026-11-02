@@ -15,18 +15,14 @@
  */
 
 import type { Client, BrokerResponse, BrokerFailure } from "./client.ts";
-import { RECORD_PATH, appendRecord, replay } from "./record.ts";
+import { recordPath, appendRecord, replay } from "./record.ts";
 import { readAccount, readPause, writePause, isManaged, managedTradeIdsFromRecord, MERIDIAN_TAG } from "./engine.ts";
 import { riskBreachesFromRecord } from "./risk.ts";
 import type { AccountSnapshot } from "./engine.ts";
-import { resolveSettings, type ExecutionConfig } from "./config.ts";
+import { resolveSettings, DEMO_TEST_LABEL, DEMO_TEST_NOTE, type ExecutionConfig } from "./config.ts";
 import { PRACTICE_HOST } from "./interlock.ts";
 
 type ExecutionConfigLike = ExecutionConfig;
-function resolveSettingsLike(c: ExecutionConfig): Array<{ key: string; value: unknown; source: string }> {
-  const r = resolveSettings(c);
-  return Object.values(r.values).map((v) => ({ key: v.key, value: v.value, source: v.source }));
-}
 
 function isTransportFailure(r: BrokerResponse | BrokerFailure): r is BrokerFailure {
   return (r as BrokerFailure).transportFailure === true;
@@ -382,6 +378,29 @@ export type StatusSnapshot = {
   interlock: { practiceHost: string; configurable: boolean };
   mode: { current: string; source: string; automaticReachable: boolean };
   testProfile: boolean;
+  /**
+   * Which label governs the risk settings. "DEMO-TEST" means the values are the ones the
+   * owner directed for a Practice demo run — shown with that label wherever they appear,
+   * never as the owner's own risk appetite.
+   */
+  settingsProfile: {
+    label: string;
+    demoTestProfileInUse: boolean;
+    testProfileInUse: boolean;
+    /** The sentence that must accompany DEMO TEST values, or null when the profile is not active. */
+    note: string | null;
+  };
+  /**
+   * Whether a new entry could be approved right now, and if not, which setting refused it.
+   * Derived from the same guards the order path applies, so the console states the refusal
+   * before an order is attempted rather than after.
+   */
+  entryGate: {
+    allowed: boolean | null;
+    refusals: Array<{ guard: string; setting: string; settingValue: unknown; settingSource: string; message: string }>;
+    managedOpenPositions: number | null;
+    checkedAt: string;
+  };
   pause: { paused: boolean; reason: string | null; setAt: string | null };
   settings: Array<{ key: string; value: unknown; source: string }>;
   missingSettings: string[];
@@ -437,7 +456,8 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
   const chain = await verifyChain();
   const pause = await readPause();
   const broker = await readBrokerState(client);
-  const settings = resolveSettingsLike(config);
+  const resolved = resolveSettings(config);
+  const settings = Object.values(resolved.values).map((v) => ({ key: v.key, value: v.value, source: v.source }));
 
   const latest = new Map<string, (typeof all)[number]>();
   for (const r of all) {
@@ -473,7 +493,42 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
 
   const trades = broker.trades ?? [];
   const knownTradeIds = await managedTradeIdsFromRecord();
-  const managedTrades = trades.filter((t) => isManaged(t, knownTradeIds)).length;
+  const managedOpenTrades = broker.ok ? trades.filter((t) => isManaged(t, knownTradeIds)) : null;
+  const managedTrades = managedOpenTrades?.length ?? 0;
+
+  // Entry gate: the position-count guard, stated as a refusal with the setting that produced
+  // it. This mirrors GUARD_MAX_POSITIONS in the order path so the console and the engine
+  // cannot disagree about why an entry is refused.
+  const maxPositionsSetting = settings.find((s) => s.key === "maxPositions");
+  const entryRefusals: StatusSnapshot["entryGate"]["refusals"] = [];
+  if (managedOpenTrades === null) {
+    entryRefusals.push({
+      guard: "BROKER_STATE_UNAVAILABLE",
+      setting: "maxPositions",
+      settingValue: maxPositionsSetting?.value ?? null,
+      settingSource: maxPositionsSetting?.source ?? "UNSET",
+      message:
+        "A new entry cannot be evaluated: the open-position count could not be confirmed from the broker, and an unverifiable position count refuses new entries rather than guessing.",
+    });
+  } else if (maxPositionsSetting?.source === "UNSET") {
+    entryRefusals.push({
+      guard: "SETTING_UNSET",
+      setting: "maxPositions",
+      settingValue: null,
+      settingSource: "UNSET",
+      message: "A new entry is REFUSED: the setting maxPositions is UNSET, so no position limit can be enforced.",
+    });
+  } else if (typeof maxPositionsSetting?.value === "number" && managedOpenTrades.length >= maxPositionsSetting.value) {
+    entryRefusals.push({
+      guard: "GUARD_MAX_POSITIONS",
+      setting: "maxPositions",
+      settingValue: maxPositionsSetting.value,
+      settingSource: maxPositionsSetting.source,
+      message:
+        `A new entry is REFUSED: ${managedOpenTrades.length} Meridian-managed position${managedOpenTrades.length === 1 ? " is" : "s are"} already open and the profile allows a maximum of ${maxPositionsSetting.value}. ` +
+        `This refusal is produced by the setting maxPositions = ${maxPositionsSetting.value} (source ${maxPositionsSetting.source === "DEMO-TEST" ? DEMO_TEST_LABEL : maxPositionsSetting.source}).`,
+    });
+  }
 
   const trips = all
     .filter((r) => r.kind === "ORDER_ACKNOWLEDGED")
@@ -494,6 +549,9 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
   if (unmeasured > 0) {
     alerts.push(`${unmeasured} filled trade(s) have an UNMEASURED realised risk — see the REALISED_RISK records with state UNMEASURED for the reason`);
   }
+  if (resolved.demoTestProfileInUse) {
+    alerts.push(`${DEMO_TEST_LABEL} PROFILE ACTIVE — ${DEMO_TEST_NOTE}`);
+  }
   if (!chain.ok) {
     alerts.push(`the execution record's hash chain is BROKEN at record ${chain.firstBreak?.seq ?? "?"} (${chain.firstBreak?.reason ?? ""}) — the record is not trustworthy until this is explained`);
   }
@@ -510,6 +568,18 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
     interlock: { practiceHost: PRACTICE_HOST, configurable: false },
     mode: { current: config.mode, source: config.modeSource, automaticReachable: config.mode === "automatic" },
     testProfile: config.useTestProfile,
+    settingsProfile: {
+      label: resolved.profileLabel === "DEMO-TEST" ? DEMO_TEST_LABEL : resolved.profileLabel,
+      demoTestProfileInUse: resolved.demoTestProfileInUse,
+      testProfileInUse: resolved.testProfileInUse,
+      note: resolved.demoTestProfileInUse ? DEMO_TEST_NOTE : null,
+    },
+    entryGate: {
+      allowed: entryRefusals.length === 0 ? true : managedOpenTrades === null ? null : false,
+      refusals: entryRefusals,
+      managedOpenPositions: managedOpenTrades === null ? null : managedOpenTrades.length,
+      checkedAt: broker.readAt,
+    },
     pause,
     settings: settings.map((s) => ({ key: s.key, value: s.value, source: s.source })),
     missingSettings: settings.filter((s) => s.source === "UNSET").map((s) => s.key),
@@ -526,7 +596,7 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
       errors: broker.errors,
     },
     orders: orders.slice(0, 25),
-    record: { path: RECORD_PATH, records: chain.recordCount, chainOk: chain.ok },
+    record: { path: recordPath(), records: chain.recordCount, chainOk: chain.ok },
     latency: {
       lastRoundTripMs: trips.length ? trips[trips.length - 1]! : null,
       lastInstructionToAckMs: i2a.length ? i2a[i2a.length - 1]! : null,

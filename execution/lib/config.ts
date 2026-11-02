@@ -1,5 +1,5 @@
 /**
- * Execution configuration: three modes and eleven required settings.
+ * Execution configuration: three modes and twelve required settings.
  *
  * The governing rule from the owner's brief: NO ORDER MAY BE SUBMITTED WITH A
  * MISSING REQUIRED SETTING. So every setting has an explicit UNSET state, and
@@ -7,10 +7,17 @@
  * path refuses, naming them, if that list is non-empty.
  *
  * We are not allowed to invent values for these. What we are allowed to do — and
- * what the brief asks for — is ship a clearly-labelled TEST profile for exercising
- * the Practice connection. Every value taken from that profile is tagged
- * source:"TEST" here, in the record, and in the UI. If `useTestProfile` is false and
- * the owner has not supplied a value, the setting stays UNSET and nothing trades.
+ * what the brief asks for — is ship clearly-labelled profiles for exercising the
+ * Practice connection. There are two, and the label says which one supplied a value:
+ *
+ *   source "TEST"      — the conservative test profile (TEST_PROFILE), useTestProfile
+ *   source "DEMO-TEST" — the values the owner directed for a Practice demo run
+ *                        (DEMO_TEST_PROFILE), useDemoTestProfile. Never labelled OWNER:
+ *                        they are demo-test numbers, not the owner's risk appetite.
+ *   source "OWNER"     — a value the owner supplied in config.json ownerSettings
+ *
+ * If neither profile is active and the owner has not supplied a value, the setting
+ * stays UNSET and nothing trades.
  */
 
 export type Mode = "signals-only" | "approve-before-execution" | "automatic";
@@ -18,7 +25,7 @@ export type Mode = "signals-only" | "approve-before-execution" | "automatic";
 export const MODES: readonly Mode[] = ["signals-only", "approve-before-execution", "automatic"];
 export const DEFAULT_MODE: Mode = "signals-only";
 
-export type SettingSource = "OWNER" | "TEST" | "UNSET";
+export type SettingSource = "OWNER" | "DEMO-TEST" | "TEST" | "UNSET";
 
 export type ResolvedSetting = { key: string; value: unknown; source: SettingSource };
 
@@ -71,6 +78,55 @@ export const TEST_PROFILE: Record<RequiredSettingKey, unknown> = {
     "Manual (non-Meridian) trades and positions are never adopted, modified, protected or closed by Meridian. Reconciliation records them as MANUAL_EXTERNAL and leaves them exactly as the owner left them.",
 };
 
+/**
+ * DEMO TEST profile — the values the owner directed for a Practice-only demo run:
+ * 0.1% risk per trade, at most 1 open Meridian trade, a 0.5% daily loss threshold, and
+ * every other required setting stated explicitly so nothing is left blank or silently
+ * defaulted.
+ *
+ * This is a THIRD label on purpose. These are not the owner's risk settings and are not
+ * presented as their appetite for risk: they are the numbers the owner chose for one
+ * Practice test, and every value is labelled DEMO TEST in the execution record and on
+ * the console. They are kept separate from TEST_PROFILE so the older conservative test
+ * values can never be mistaken for them, and separate from ownerSettings so that
+ * nothing here is ever labelled OWNER.
+ *
+ * The profile changes no host and cannot change the mode: Practice only, signals-only.
+ */
+export const DEMO_TEST_LABEL = "DEMO TEST";
+
+/** One sentence that must appear wherever DEMO TEST values are shown. */
+export const DEMO_TEST_NOTE =
+  "DEMO TEST: the values the owner directed for a Practice-only demo run — 0.1% risk per trade, at most 1 open Meridian trade, 0.5% daily loss threshold, every other setting stated explicitly. They are not the owner's real risk settings and nothing here is their appetite for risk. Practice only.";
+
+export const DEMO_TEST_PROFILE: Record<RequiredSettingKey, unknown> = {
+  riskPerTradePct: 0.1,
+  maxCombinedExposurePct: 100,
+  maxPositions: 1,
+  dailyLossThresholdPct: 0.5,
+  dailyLossCalculation:
+    "DEMO TEST: realised + unrealised P/L in account currency of Meridian-managed trades filled during the current UTC day, measured against that day's opening NAV; at or below -0.5% of opening NAV, new entries are paused until the next UTC day",
+  allowedInstruments: ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD"],
+  allowedTradingTimes: {
+    days: ["Mon", "Tue", "Wed", "Thu", "Fri"],
+    fromUtc: "00:00",
+    toUtc: "23:59",
+    note: "DEMO TEST: weekday trading only, all hours. Not an owner instruction about when to trade.",
+  },
+  maxSpreadPips: 3,
+  maxEntryDeviationPips: 10,
+  signalExpirySeconds: 300,
+  entryRetryPolicy: {
+    maxAttempts: 2,
+    retryOnlyAfterBrokerStateCheck: true,
+    neverRetryOnBrokerReject: true,
+    backoffMs: 1500,
+    note: "DEMO TEST: at most one retry, and only after a fresh broker read shows the order is absent.",
+  },
+  manualTradePolicy:
+    "DEMO TEST: manual (non-Meridian) trades and positions are never adopted, modified, protected or closed by Meridian. Reconciliation records them as MANUAL_EXTERNAL and leaves them exactly as they are.",
+};
+
 export type StrategyConfig = {
   id: string;
   version: string;
@@ -84,6 +140,8 @@ export type ExecutionConfig = {
   mode: Mode;
   modeSource: "DEFAULT" | "CONFIG";
   useTestProfile: boolean;
+  /** The owner-directed DEMO TEST profile (Practice demo run). Labelled DEMO TEST, never OWNER. */
+  useDemoTestProfile: boolean;
   automaticAcknowledged: boolean;
   acknowledgedBy: string | null;
   ownerSettings: Partial<Record<RequiredSettingKey, unknown>>;
@@ -92,8 +150,8 @@ export type ExecutionConfig = {
   problems: string[];
 };
 
-import { CONFIG_PATH } from "./paths.ts";
-export { CONFIG_PATH };
+import { configPath } from "./paths.ts";
+export { configPath };
 
 /**
  * The strategies this build knows about.
@@ -132,6 +190,7 @@ export function defaultConfig(): ExecutionConfig {
     mode: DEFAULT_MODE,
     modeSource: "DEFAULT",
     useTestProfile: false,
+    useDemoTestProfile: false,
     automaticAcknowledged: false,
     acknowledgedBy: null,
     ownerSettings: {},
@@ -178,6 +237,16 @@ export function parseConfig(raw: unknown): ExecutionConfig {
   }
 
   if (obj.useTestProfile === true) base.useTestProfile = true;
+  if (obj.useDemoTestProfile === true) base.useDemoTestProfile = true;
+  // Two labelled profiles cannot both govern the same settings: which value won would be
+  // invisible in the record. Fail closed and name it rather than pick one quietly.
+  if (base.useTestProfile && base.useDemoTestProfile) {
+    base.problems.push(
+      "both useTestProfile and useDemoTestProfile are true; exactly one labelled profile may be active, so NEITHER is applied and every setting without an owner value stays UNSET",
+    );
+    base.useTestProfile = false;
+    base.useDemoTestProfile = false;
+  }
 
   if (obj.ownerSettings && typeof obj.ownerSettings === "object") {
     const supplied = obj.ownerSettings as Record<string, unknown>;
@@ -209,6 +278,14 @@ export function parseConfig(raw: unknown): ExecutionConfig {
   return base;
 }
 
+/** Summarise which label governs the resolved values, for the record and the console. */
+export function profileLabelOf(values: Record<string, ResolvedSetting>): SettingSource | "MIXED" | "NONE" {
+  const sources = new Set(Object.values(values).map((v) => v.source));
+  if (sources.size === 0) return "NONE";
+  if (sources.size > 1) return "MIXED";
+  return [...sources][0]!;
+}
+
 export type ResolvedSettings = {
   values: Record<string, ResolvedSetting>;
   missing: RequiredSettingKey[];
@@ -216,6 +293,9 @@ export type ResolvedSettings = {
   mode: Mode;
   modeSource: "DEFAULT" | "CONFIG";
   testProfileInUse: boolean;
+  demoTestProfileInUse: boolean;
+  /** Which label governs the values: OWNER, DEMO-TEST, TEST, or NONE when all are UNSET. */
+  profileLabel: SettingSource | "MIXED" | "NONE";
   problems: string[];
 };
 
@@ -230,6 +310,12 @@ export function resolveSettings(config: ExecutionConfig): ResolvedSettings {
     const owner = config.ownerSettings[key];
     if (owner !== undefined && owner !== null && owner !== "") {
       values[key] = { key, value: owner, source: "OWNER" };
+      continue;
+    }
+    // DEMO TEST is checked before the older TEST profile. The two cannot both be on
+    // (parseConfig refuses that), so the order is documentation rather than precedence.
+    if (config.useDemoTestProfile) {
+      values[key] = { key, value: DEMO_TEST_PROFILE[key], source: "DEMO-TEST" };
       continue;
     }
     if (config.useTestProfile) {
@@ -256,6 +342,8 @@ export function resolveSettings(config: ExecutionConfig): ResolvedSettings {
     mode: config.mode,
     modeSource: config.modeSource,
     testProfileInUse: config.useTestProfile,
+    demoTestProfileInUse: config.useDemoTestProfile,
+    profileLabel: profileLabelOf(values),
     problems,
   };
 }
@@ -265,7 +353,7 @@ export function resolveSettings(config: ExecutionConfig): ResolvedSettings {
  * falls through to something permissive: it yields the default config, which is
  * signals-only with every setting UNSET, so nothing can trade.
  */
-export async function loadConfigFromDisk(path: string = CONFIG_PATH): Promise<ExecutionConfig> {
+export async function loadConfigFromDisk(path: string = configPath()): Promise<ExecutionConfig> {
   const { readFile } = await import("node:fs/promises");
   let raw: unknown;
   try {
