@@ -92,7 +92,8 @@ export type ExecutionConfig = {
   problems: string[];
 };
 
-export const CONFIG_PATH = "/home/team/shared/execution/config.json";
+import { CONFIG_PATH } from "./paths.ts";
+export { CONFIG_PATH };
 
 /**
  * The strategies this build knows about.
@@ -238,14 +239,24 @@ export function resolveSettings(config: ExecutionConfig): ResolvedSettings {
     values[key] = { key, value: null, source: "UNSET" };
     missing.push(key);
   }
+  const problems = [...config.problems];
+  for (const key of ["riskPerTradePct", "maxCombinedExposurePct", "maxPositions", "dailyLossThresholdPct", "maxSpreadPips", "maxEntryDeviationPips", "signalExpirySeconds"] as const) {
+    const value = values[key].value;
+    if (values[key].source !== "UNSET" && (typeof value !== "number" || !Number.isFinite(value) || value <= 0)) problems.push(`${key} must be a positive finite number`);
+  }
+  if (values.maxPositions.source !== "UNSET" && !Number.isInteger(values.maxPositions.value)) problems.push("maxPositions must be an integer");
+  const allowed = values.allowedInstruments.value;
+  if (values.allowedInstruments.source !== "UNSET" && (!Array.isArray(allowed) || !allowed.length || allowed.some((x) => typeof x !== "string" || !/^[A-Z]{3}_[A-Z]{3}$/.test(x)))) problems.push("allowedInstruments must contain valid instrument names");
+  const times = values.allowedTradingTimes.value as { days?: unknown[]; fromUtc?: string; toUtc?: string } | null;
+  if (values.allowedTradingTimes.source !== "UNSET" && (!times || !Array.isArray(times.days) || !times.days.length || times.days.some((d) => !["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].includes(String(d))) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(times.fromUtc ?? "") || !/^([01]\d|2[0-3]):[0-5]\d$/.test(times.toUtc ?? "") || times.fromUtc! > times.toUtc!)) problems.push("allowedTradingTimes must define a valid same-day UTC window");
   return {
     values,
     missing,
-    allSet: missing.length === 0,
+    allSet: missing.length === 0 && problems.length === 0,
     mode: config.mode,
     modeSource: config.modeSource,
     testProfileInUse: config.useTestProfile,
-    problems: config.problems,
+    problems,
   };
 }
 

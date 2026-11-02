@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
+import { bytesOf, stampOf } from "~/components/DataProvenance";
 import { RULESET_VERSION } from "~/lib/market/ruleset";
 import {
   buildTrackRecordPayload,
@@ -11,11 +12,16 @@ import {
 /**
  * /track-record — the record of what the engine said, newest first.
  *
- * This page is a reader for an append-only JSONL log written by the server at
- * /home/team/shared/signal-log/signals.jsonl. It shows records and an integrity
- * verdict. It deliberately calculates nothing: no result, no accuracy, no win
- * rate — a record of signals is not a track record of trades, and nothing here
- * pretends otherwise.
+ * This page is a reader for an append-only JSONL log. On the owner's machine it reads
+ * the live file; on the published site, which cannot see that machine, it reads the
+ * snapshot taken when the site was published and says so — cutoff, record count and
+ * sha256 — because a dated copy presented as a live log would be a lie about how much
+ * of the record exists. If neither can be read, the page says the record is
+ * unavailable and shows no records at all: it never renders an empty log as if it
+ * were the beginning of history.
+ *
+ * It deliberately calculates nothing: no result, no accuracy, no win rate — a record
+ * of signals is not a track record of trades, and nothing here pretends otherwise.
  */
 export const Route = createFileRoute("/track-record")({
   head: () => ({
@@ -196,6 +202,9 @@ function TrackRecordPage() {
 
   const { log, integrity, about, records } = payload;
   const intact = integrity.ok;
+  const snapshot = log.bundled;
+  const isSnapshot = log.origin === "bundle" && snapshot !== null;
+  const available = log.available;
 
   return (
     <main className="mx-auto min-h-dvh w-full max-w-4xl px-5 py-10 text-slate-900">
@@ -223,6 +232,65 @@ function TrackRecordPage() {
         </p>
       </header>
 
+      {!available ? (
+        <section className="mb-6 rounded-xl border-2 border-rose-300 bg-rose-50 p-5 text-sm text-rose-950">
+          <h2 className="text-lg font-semibold">The signal record is unavailable right now</h2>
+          <p className="mt-2">
+            Neither the log file on the owner&rsquo;s machine nor the snapshot bundled into this
+            deployment could be read, so no record is shown. This page shows nothing rather than an
+            empty log, because an empty log would read as the beginning of the record — and the
+            record does not begin here.
+          </p>
+          <p className="mt-2 text-xs text-rose-900">
+            Tried: <span className="font-mono">{log.logPath}</span> and the bundled snapshot at{" "}
+            <span className="font-mono">src/data/bundled/signals.jsonl</span>.
+          </p>
+        </section>
+      ) : null}
+
+      {isSnapshot && snapshot ? (
+        <section className="mb-6 rounded-xl border border-sky-300 bg-sky-50 p-5 text-sm text-sky-950">
+          <h2 className="text-lg font-semibold">Snapshot of the record — not the live log</h2>
+          <ul className="mt-2 space-y-1">
+            <li>
+              <strong className="font-semibold">What this is:</strong> a copy of the append-only log
+              taken when this site was published. Cutoff{" "}
+              <span className="font-mono">{stampOf(snapshot.copiedAt)}</span>,{" "}
+              {String(integrity.recordCount)} records.
+            </li>
+            <li>
+              <strong className="font-semibold">Where the live record is:</strong> on the
+              owner&rsquo;s machine, at <span className="font-mono">{snapshot.sourcePath}</span>.
+              This published host cannot read that machine, so anything recorded after the cutoff is
+              not on this page.
+            </li>
+            <li>
+              <strong className="font-semibold">The copy:</strong>{" "}
+              <span className="font-mono">{bytesOf(snapshot.bytes)}</span> ·{" "}
+              <span className="font-mono" title={snapshot.sha256}>
+                sha256 {snapshot.sha256.slice(0, 12)}…
+              </span>{" "}
+              · copied byte for byte, so the chain below is the same chain the owner&rsquo;s file held
+              at that moment.
+            </li>
+            {snapshot.note ? (
+              <li className="text-amber-900">
+                <strong className="font-semibold">Note recorded at bundle time:</strong>{" "}
+                {snapshot.note}.
+              </li>
+            ) : null}
+          </ul>
+        </section>
+      ) : null}
+
+      {available && !isSnapshot ? (
+        <p className="mb-6 max-w-3xl text-xs text-slate-500">
+          <strong className="font-semibold text-slate-600">Data:</strong> the live log, read from{" "}
+          <span className="font-mono">{log.logPath}</span> on this machine.
+        </p>
+      ) : null}
+
+      {available ? (
       <section
         className={`mb-6 rounded-xl border p-5 ${
           intact ? "border-emerald-300 bg-emerald-50" : "border-rose-300 bg-rose-50"
@@ -242,13 +310,16 @@ function TrackRecordPage() {
           <li>
             <strong className="font-semibold">Log begins:</strong> {formatUtc(log.beginsAt)} — the log
             starts on the date of its first record and contains nothing before that.
+            {isSnapshot && snapshot
+              ? ` As of the snapshot taken ${stampOf(snapshot.copiedAt)}, which is the whole file the owner's machine held at that moment.`
+              : ""}
           </li>
           <li>
             <strong className="font-semibold">Most recent record:</strong>{" "}
             {formatUtc(log.lastRecordedAt)}
             {log.secondsSinceLastRecord === null
               ? ""
-              : ` (${String(log.secondsSinceLastRecord)} seconds ago)`}
+              : ` (${String(log.secondsSinceLastRecord)} seconds ${isSnapshot ? "before the snapshot was taken" : "ago"})`}
             .
           </li>
           <li>
@@ -274,7 +345,22 @@ function TrackRecordPage() {
           {integrity.cached
             ? "This verdict was reused because the log file has not changed since it was last walked — a full walk re-runs whenever the file changes, or on request with ?full=1."
             : "This verdict is from a full walk of the whole file."}{" "}
-          Log file: <span className="font-mono">{log.logPath}</span> ({String(log.fileBytes)} bytes).
+          {isSnapshot && snapshot ? (
+            <>
+              Snapshot of{" "}
+              <span className="font-mono">{snapshot.sourcePath}</span> taken{" "}
+              {stampOf(snapshot.copiedAt)} ({String(log.fileBytes)} bytes, sha256{" "}
+              <span className="font-mono" title={snapshot.sha256}>
+                {snapshot.sha256.slice(0, 12)}…
+              </span>
+              ).
+            </>
+          ) : (
+            <>
+              Log file: <span className="font-mono">{log.logPath}</span> ({String(log.fileBytes)}{" "}
+              bytes).
+            </>
+          )}{" "}
           Machine-readable copy:{" "}
           <a className="underline" href="/api/track-record">
             /api/track-record
@@ -282,6 +368,7 @@ function TrackRecordPage() {
           .
         </p>
       </section>
+      ) : null}
 
       <section className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-5">
         <h2 className="text-lg font-semibold text-slate-900">What this page is — and what it is not</h2>
@@ -312,7 +399,12 @@ function TrackRecordPage() {
             showing {String(payload.recordsShown)} of {String(integrity.recordCount)}
           </span>
         </h2>
-        {records.length === 0 ? (
+        {!available ? (
+          <p className="rounded-xl border border-rose-300 bg-rose-50 p-5 text-sm text-rose-950">
+            No record is available to show. Nothing is listed here rather than an empty list, because
+            an empty list would read as the beginning of the record.
+          </p>
+        ) : records.length === 0 ? (
           <p className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-700">
             The log is empty. No record has been written yet, so there is nothing to show — and
             nothing before this. Records appear here as soon as the engine next computes.

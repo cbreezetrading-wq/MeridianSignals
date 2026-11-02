@@ -17,7 +17,7 @@
  *                     broker's own object shows the stop
  */
 
-import { createClient, type Client, type BrokerResponse, type BrokerFailure } from "./client.ts";
+import { type Client, type BrokerResponse, type BrokerFailure } from "./client.ts";
 import { createHash } from "node:crypto";
 import { PRACTICE_HOST, assertPracticeTarget, interlockStatement } from "./interlock.ts";
 import { appendRecord, replay } from "./record.ts";
@@ -129,10 +129,6 @@ export async function managedTradeIdsFromRecord(): Promise<Set<string>> {
   return ids;
 }
 
-function managedTagged(entity: { clientExtensions?: { tag?: string }; stopLossOrder?: any; takeProfitOrder?: any } | undefined): boolean {
-  return isManaged(entity);
-}
-
 export async function loadConfig(path?: string): Promise<ExecutionConfig> {
   return loadConfigFromDisk(path);
 }
@@ -189,7 +185,7 @@ export async function attest(client: Client): Promise<Attestation> {
     liveProbe = {
       host: liveHost,
       status: 0,
-      refused: true, // unreachable is also "cannot trade live"
+      refused: false, // a network error is not proof that a token was rejected
       errorMessage: error instanceof Error ? error.message : String(error),
     };
   }
@@ -232,7 +228,8 @@ export async function readAccount(client: Client): Promise<{ ok: true; account: 
   const res = await client.summary();
   if (isTransportFailure(res)) return { ok: false, reason: "ACCOUNT_READ_FAILED", detail: res.error };
   if (!res.ok) return { ok: false, reason: "ACCOUNT_READ_FAILED", detail: { status: res.status, text: res.text } };
-  const a = res.body.account;
+  const a = res.body?.account;
+  if (!a || !Number.isFinite(Number(a.NAV)) || Number(a.NAV) <= 0 || !Number.isFinite(Number(a.marginAvailable)) || typeof a.currency !== "string") return { ok: false, reason: "ACCOUNT_READ_FAILED", detail: "Malformed account state" };
   const account: AccountSnapshot = {
     id: a.id,
     currency: a.currency,
@@ -293,25 +290,27 @@ export async function readQuotes(client: Client, instruments: string[]): Promise
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 
-export const PAUSE_PATH = "/home/team/shared/execution/pause.json";
+import { EXECUTION_DIR, executionPath } from "./paths.ts";
+export const PAUSE_PATH = executionPath("pause.json");
 
 export async function readPause(): Promise<{ paused: boolean; reason: string | null; setAt: string | null }> {
   try {
     const raw = JSON.parse(await readFile(PAUSE_PATH, "utf8"));
     return { paused: raw.paused === true, reason: raw.reason ?? null, setAt: raw.setAt ?? null };
-  } catch {
-    return { paused: false, reason: null, setAt: null };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { paused: false, reason: null, setAt: null };
+    return { paused: true, reason: "Pause state is unreadable; operator inspection required", setAt: null };
   }
 }
 
 export async function writePause(paused: boolean, reason: string | null): Promise<void> {
-  await mkdir("/home/team/shared/execution", { recursive: true });
+  await mkdir(EXECUTION_DIR, { recursive: true });
   await writeFile(PAUSE_PATH, JSON.stringify({ paused, reason, setAt: new Date().toISOString() }, null, 2), "utf8");
 }
 
 /* -------------------------------------------------------------- daily state */
 
-export const DAY_STATE_PATH = "/home/team/shared/execution/day-state.json";
+export const DAY_STATE_PATH = executionPath("day-state.json");
 
 export async function dayStartNav(nav: number): Promise<{ date: string; nav: number }> {
   const today = new Date().toISOString().slice(0, 10);
@@ -321,7 +320,7 @@ export async function dayStartNav(nav: number): Promise<{ date: string; nav: num
   } catch {
     /* fall through */
   }
-  await mkdir("/home/team/shared/execution", { recursive: true });
+  await mkdir(EXECUTION_DIR, { recursive: true });
   await writeFile(DAY_STATE_PATH, JSON.stringify({ date: today, nav }, null, 2), "utf8");
   return { date: today, nav };
 }
@@ -354,7 +353,7 @@ export async function evaluate(
 
   // 1. settings
   if (!settings.allSet) {
-    reasons.push(`missing required settings: ${settings.missing.join(", ")}`);
+    reasons.push(`Invalid or missing settings: ${[...settings.missing, ...settings.problems].join("; ")}`);
     await appendRecord({
       kind: "VALIDATION_REFUSED",
       signalId: instruction.signalId,
@@ -441,6 +440,9 @@ export async function evaluate(
     return { ...base, ok: false, state: "REFUSED_INSTRUCTION", reasons, proposal: null, orderPayload: null };
   }
 
+  const ageMs = Date.now() - Date.parse(instruction.generatedAt);
+  if (ageMs > Number(settings.values.signalExpirySeconds.value) * 1000) return { ...base, ok: false, state: "REFUSED_INSTRUCTION", reasons: ["Signal exceeds configured maximum age"], proposal: null, orderPayload: null };
+
   // 5. pause
   const pause = await readPause();
   if (pause.paused) {
@@ -470,13 +472,19 @@ export async function evaluate(
   // Conversion pairs are only requested when the quote currency is not the account
   // currency. Asking for a nonsense pair such as USD_USD makes OANDA reject the whole
   // pricing request, which would look like "no price" for the instrument we care about.
-  const conversionPairs = quoteCcy === account.currency ? [] : [`${account.currency}_${quoteCcy}`, `${quoteCcy}_${account.currency}`];
+  const conversionPairs = quoteCcy === account.currency ? [] : [`${account.currency}_${quoteCcy}`, `${quoteCcy}_${account.currency}`].filter((pair) => meta[pair]);
   const quotes = await readQuotes(client, [...new Set([instruction.instrument, ...conversionPairs])]);
   const quote = quotes[instruction.instrument];
 
   if (!quote || !Number.isFinite(quote.mid) || quote.mid <= 0) {
     reasons.push(`UNAVAILABLE: no price for ${instruction.instrument}`);
     return { ...base, ok: false, state: "UNAVAILABLE", reasons, proposal: null, orderPayload: null };
+  }
+
+  const quoteAge = Date.now() - Date.parse(quote.time);
+  if (!Number.isFinite(quoteAge) || quoteAge < -5000 || quoteAge > 30000 ||
+      !Number.isFinite(quote.bid) || !Number.isFinite(quote.ask) || quote.bid <= 0 || quote.ask < quote.bid) {
+    return { ...base, ok: false, state: "UNAVAILABLE", reasons: ["Broker quote is stale or malformed"], proposal: null, orderPayload: null };
   }
 
   // 8. guards
@@ -508,7 +516,13 @@ export async function evaluate(
   }
 
   const openTradesRes = await client.openTrades();
-  const openTrades: any[] = !isTransportFailure(openTradesRes) && openTradesRes.ok ? (openTradesRes.body.trades ?? []) : [];
+  if (isTransportFailure(openTradesRes) || !openTradesRes.ok || !Array.isArray(openTradesRes.body?.trades)) {
+    return { ...base, ok: false, state: "UNAVAILABLE", reasons: ["Cannot verify open trades; new entries refused"], proposal: null, orderPayload: null };
+  }
+  const openTrades: any[] = openTradesRes.body.trades;
+  if (openTrades.some((t) => t.instrument === instruction.instrument && !isManaged(t))) {
+    reasons.push("GUARD_MANUAL_POSITION: external trade in this instrument; refusing possible netting or interference");
+  }
   const knownTradeIds = await managedTradeIdsFromRecord();
   const managedOpen = openTrades.filter((t) => isManaged(t, knownTradeIds));
   if (managedOpen.length >= maxPositions) {
@@ -527,6 +541,13 @@ export async function evaluate(
     reasons.push(`GUARD_DAILY_LOSS: day P/L ${dayPnl.toFixed(2)} ${account.currency} has reached the daily threshold -${threshold.toFixed(2)} (${String(settings.values.dailyLossThresholdPct.value)}% of opening NAV ${day.nav.toFixed(2)})`);
   }
 
+  const executablePrice = instruction.direction === "long" ? quote.ask : quote.bid;
+  const priceBound = instruction.sourceBar.close + (instruction.direction === "long" ? 1 : -1) * maxDeviation * pipSize(instruction.instrument);
+  if (instruction.direction === "long" ? executablePrice > priceBound : executablePrice < priceBound) reasons.push("GUARD_ENTRY_DEVIATION: executable price exceeds permitted entry bound");
+  if (instruction.direction === "long" ? instruction.stopPrice >= executablePrice || instruction.takeProfitPrice <= executablePrice : instruction.stopPrice <= executablePrice || instruction.takeProfitPrice >= executablePrice) {
+    reasons.push("GUARD_LEVELS: stop or target is on the wrong side of the executable price");
+  }
+
   // 9. sizing
   const instrumentMeta = meta[instruction.instrument];
   if (!instrumentMeta) {
@@ -537,9 +558,6 @@ export async function evaluate(
     sizing = sizePosition({
       instrument: instruction.instrument,
       direction: instruction.direction,
-      // The far side of the spread, not the mid: ask for a long, bid for a short. This is
-      // the price the position will actually fill at, so this is the stop distance the
-      // position really carries and the one the size must be derived from.
       quote,
       stopPrice: instruction.stopPrice,
       nav: account.nav,
@@ -584,6 +602,9 @@ export async function evaluate(
 
   // 10. the order, with protection attached in the same request object.
   const orderPayload = buildOrderPayload(instruction, sizing.signedUnits, instrumentMeta, orderKey);
+  // Bound the fill to the same executable-side price used by the risk fix.
+  // A moved market may reject rather than fill beyond the approved risk basis.
+  orderPayload.order.priceBound = formatPrice(sizing.entryPriceFar, instrumentMeta.displayPrecision);
   const riskCapAccountCurrency = (account.nav * riskPct) / 100;
   const proposal = {
     mode: settings.mode,
@@ -704,7 +725,7 @@ export type DuplicateCheck = {
  *  - the broker itself (works even if the record is lost).
  * Either one finding the key means no second order is sent.
  */
-export async function checkDuplicate(client: Client, orderKey: string, signalId: string): Promise<DuplicateCheck> {
+export async function checkDuplicate(client: Client, orderKey: string, _signalId: string): Promise<DuplicateCheck> {
   const { byOrderKey } = await replay();
   const existing = byOrderKey.get(orderKey) ?? [];
   const submitted = existing.filter((r) =>
@@ -715,11 +736,13 @@ export async function checkDuplicate(client: Client, orderKey: string, signalId:
   }
 
   const ordersRes = await client.orders("ALL");
+  if (isTransportFailure(ordersRes) || !ordersRes.ok || !Array.isArray(ordersRes.body?.orders)) throw new Error("Cannot verify broker orders for duplicate prevention");
   if (!isTransportFailure(ordersRes) && ordersRes.ok) {
     const hit = (ordersRes.body.orders ?? []).find((o: any) => o.clientExtensions?.id === orderKey);
     if (hit) return { duplicate: true, foundIn: "BROKER_ORDER", evidence: { id: hit.id, state: hit.state, type: hit.type, clientExtensions: hit.clientExtensions } };
   }
   const tradesRes = await client.openTrades();
+  if (isTransportFailure(tradesRes) || !tradesRes.ok || !Array.isArray(tradesRes.body?.trades)) throw new Error("Cannot verify broker trades for duplicate prevention");
   if (!isTransportFailure(tradesRes) && tradesRes.ok) {
     const hit = (tradesRes.body.trades ?? []).find(
       (t: any) =>
@@ -855,13 +878,27 @@ export type SubmitResult = {
   protection: unknown;
 };
 
-export async function submitSignal(
+export function payloadHash(payload: unknown): string {
+  return sha256(JSON.stringify(payload));
+}
+
+import { withSubmissionLock } from "./submissionLock.ts";
+
+export async function submitSignal(...args: Parameters<typeof submitSignalUnlocked>): Promise<SubmitResult> {
+  return withSubmissionLock(() => submitSignalUnlocked(...args));
+}
+
+async function submitSignalUnlocked(
   client: Client,
   instruction: SignalInstruction,
   config: ExecutionConfig,
-  opts: { settings?: ResolvedSettings } = {},
+  opts: { settings?: ResolvedSettings; approvedPayloadHash?: string } = {},
 ): Promise<SubmitResult> {
-  const settings = opts.settings ?? resolveSettings(config);
+  const settings = resolveSettings(config);
+  const { verifyChain } = await import("./record.ts");
+  const chain = await verifyChain();
+  if (!chain.ok) throw new Error("Execution record hash chain is invalid; submissions refused");
+  if (config.problems.length) throw new Error(`Invalid execution config: ${config.problems.join("; ")}`);
   const orderKey = idempotencyKey(instruction);
 
   await appendRecord({
@@ -921,6 +958,12 @@ export async function submitSignal(
     };
   }
 
+  if (config.mode === "approve-before-execution" && opts.approvedPayloadHash !== payloadHash(evaluation.orderPayload)) {
+    return { state: "REFUSED_GUARD", ok: false, orderKey, signalId: instruction.signalId,
+      reasons: ["Approval missing or order changed. Preview and approve the current payload hash."],
+      proposal: evaluation.proposal, broker: null, timing: null, protection: null };
+  }
+
   // 6. duplicate check, immediately before the write.
   const dup = await checkDuplicate(client, orderKey, instruction.signalId);
   if (dup.duplicate) {
@@ -977,6 +1020,9 @@ export async function submitSignal(
   // Submit. Timing is measured around the write only.
   const requestedAt = new Date().toISOString();
   const t0 = Date.now();
+  await appendRecord({ kind: "ORDER_REQUESTED", signalId: instruction.signalId,
+    strategyId: instruction.strategyId, strategyVersion: instruction.strategyVersion,
+    orderKey, state: "REQUESTED", payload: { proposal: evaluation.proposal, requestedAt, riskRecheck: recheck.recheck } });
   const res = await client.createOrder(evaluation.orderPayload);
   const roundTripMs = Date.now() - t0;
   const acknowledgedAt = new Date().toISOString();
@@ -1017,22 +1063,7 @@ export async function submitSignal(
     };
   }
 
-  await appendRecord({
-    kind: "ORDER_REQUESTED",
-    signalId: instruction.signalId,
-    strategyId: instruction.strategyId,
-    strategyVersion: instruction.strategyVersion,
-    orderKey,
-    state: "REQUESTED",
-    payload: {
-      request: res.request,
-      sentAt: res.sentAt,
-      proposal: evaluation.proposal,
-      riskRecheck: recheck.recheck,
-      origin: instruction.origin,
-      testProfile: settings.testProfileInUse,
-    },
-  });
+
 
   const body = res.body ?? {};
   const ackJson = body;

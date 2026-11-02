@@ -10,14 +10,19 @@
  * per-trade rows or from the hourly results file, and are labelled on the page
  * as computed. Nothing on the page is typed in by hand.
  *
- * If the file cannot be read the payload is `null` and the page says so. A
+ * Where the bytes come from is decided by resolveData() in bundledData.ts, in one
+ * documented order: env override → the shared path on the owner's machine → the
+ * snapshot bundled into this build → nothing.
+ *
+ * If none of them can be read the payload is `null` and the page says so. A
  * missing file never becomes a remembered or plausible-looking number.
  */
 
 import { loadBacktestResults } from "./backtestResults";
+import { resolveData, type Provenance, type SkippedCandidate } from "./bundledData";
 
-export const DAILY_BACKTEST_RESULTS_PATH =
-  process.env.DAILY_BACKTEST_RESULTS_PATH ?? "/home/team/shared/daily/results.json";
+/** The env override honoured for this file (see bundledData.ts). */
+export const DAILY_BACKTEST_RESULTS_ENV = "DAILY_BACKTEST_RESULTS_PATH";
 
 export type DailyStats = {
   trades: number;
@@ -200,8 +205,8 @@ export type DailyDerived = {
 };
 
 export type DailyLoad =
-  | { ok: true; payload: DailyPayload; derived: DailyDerived }
-  | { ok: false; error: string };
+  | { ok: true; payload: DailyPayload; derived: DailyDerived; provenance: Provenance }
+  | { ok: false; error: string; skipped: SkippedCandidate[] };
 
 /** Two-sided 95% normal quantile. n is large enough (208) that this is exact. */
 const Z95 = 1.96;
@@ -246,18 +251,16 @@ function derive(trades: Record<string, TradeRow[]> | undefined): {
 }
 
 export async function loadDailyBacktestResults(): Promise<DailyLoad> {
-  let raw: string;
-  try {
-    // Lazy, so the browser bundle never tries to resolve node:fs (see trackRecord.ts).
-    const { readFile } = await import("node:fs/promises");
-    raw = await readFile(DAILY_BACKTEST_RESULTS_PATH, "utf8");
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code ?? "unknown error";
+  const resolved = await resolveData("daily-backtest");
+  if (!resolved.ok) {
     return {
       ok: false,
-      error: `The daily backtest results file could not be read (${code}). Nothing on this page is available — no figure is shown from memory or from an earlier run.`,
+      skipped: resolved.skipped,
+      error: `The daily backtest results file could not be read (${resolved.error}). Nothing on this page is available — no figure is shown from memory or from an earlier run.`,
     };
   }
+  const raw = resolved.text;
+  const skipped = resolved.provenance.skipped;
 
   let parsed: Record<string, unknown>;
   try {
@@ -265,6 +268,7 @@ export async function loadDailyBacktestResults(): Promise<DailyLoad> {
   } catch {
     return {
       ok: false,
+      skipped,
       error:
         "The daily backtest results file is present but could not be parsed. Nothing on this page is available rather than showing a partial reading.",
     };
@@ -294,6 +298,7 @@ export async function loadDailyBacktestResults(): Promise<DailyLoad> {
   return {
     ok: true,
     payload: rest as unknown as DailyPayload,
+    provenance: resolved.provenance,
     derived: {
       perTradeR: derived.perTradeR,
       heldAtLeastAWeek: derived.heldAtLeastAWeek,

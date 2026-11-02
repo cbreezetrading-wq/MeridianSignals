@@ -33,6 +33,15 @@ secrets.json
 backtest/data/
 daily/data/
 
+# ------------------------------------------------------------------ bundled published data
+# scripts/bundle-data.ts copies the three published data files into
+# site/src/data/bundled/ on every build so the built artifact carries its own copy
+# (the published host cannot read the absolute shared paths). Those copies are
+# byte-for-byte broker-derived data and are regenerated from source each build, so
+# they are never committed. The manifest is written alongside them and is ignored
+# for the same reason: it describes files that are not in the repo.
+site/src/data/bundled/
+
 # ------------------------------------------------------------------ runtime state
 # Append-only execution/signal records. Runtime state, regenerated as the system
 # runs. The signal log contains no credentials but is the owner's trade history.
@@ -57,3 +66,6 @@ verify/
 # ------------------------------------------------------------------ editor / OS
 .DS_Store
 *.swp
+
+execution/pending-instructions.json
+execution/submission.lock/

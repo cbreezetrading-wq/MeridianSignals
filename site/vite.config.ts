@@ -1,8 +1,43 @@
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
+
+import { bundleData } from "./scripts/bundle-data";
+
+/**
+ * Copy the three published data files (two backtest results, one signal log) into
+ * src/data/bundled before the build reads them, so the deployed artifact carries its
+ * own copy and cannot fail to find them at request time. publish.sh also runs the
+ * bundler with its freshness check; doing it here as well means any `vite build`
+ * path bundles, and a source that cannot be bundled stops the build loudly instead
+ * of shipping a site that would have to say "unavailable".
+ */
+function bundlePublishedData(): Plugin {
+  let isBuild = false;
+  return {
+    name: "meridian-bundle-published-data",
+    configResolved(config) {
+      isBuild = config.command === "build";
+    },
+    async buildStart() {
+      if (!isBuild) return;
+      try {
+        const { manifest, warnings } = await bundleData();
+        for (const [key, entry] of Object.entries(manifest.entries)) {
+          if (!entry) continue;
+          this.info(
+            `bundled ${key}: ${entry.bundledPath} (${String(entry.bytes)} bytes, sha256 ${entry.sha256.slice(0, 16)}…) from ${entry.sourcePath}`,
+          );
+        }
+        for (const warning of warnings) this.warn(warning);
+      } catch (error) {
+        this.error(error instanceof Error ? error.message : String(error));
+      }
+    },
+  };
+}
 
 export default defineConfig({
   server: {
@@ -30,6 +65,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    bundlePublishedData(),
     tailwindcss(),
     tsConfigPaths({
       projects: ["./tsconfig.json"],

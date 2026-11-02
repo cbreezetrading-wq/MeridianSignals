@@ -20,7 +20,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "One ruleset, four major FX pairs, hourly bars from the owner's own OANDA v20 account with the broker's complete-flag enforced. Technical signals with their entry, stop, target, trigger bar, rule and the current bid/ask spread. No performance measured or claimed.",
+          "One ruleset, four major FX pairs, hourly bars from the owner's own OANDA v20 account with the broker's complete-flag enforced. Technical signals with their entry, stop, target, trigger bar, rule and the current bid/ask spread. Negative historical backtests reported; not a profitable strategy.",
       },
     ],
   }),
@@ -363,6 +363,7 @@ function Dashboard() {
           Meridian Signals
         </p>
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">FX signal dashboard</h1>
+        <a href="/execution" className="mt-3 inline-block text-sm underline">Open private Practice execution console →</a>
         <p className="mt-3 max-w-3xl text-sm text-slate-700">
           One ruleset, applied to four major pairs, on hourly bars from the owner&rsquo;s own broker
           account. Each pair shows the current state, the reference entry, stop and target, the bar
@@ -392,6 +393,12 @@ function Dashboard() {
               daily-bar result
             </a>
             .
+          </p>
+          <p className="mt-2 text-xs text-rose-800">
+            Both results are this project&rsquo;s own measurement. They have been checked for internal
+            consistency, but no second, independently written implementation has yet replayed the
+            ruleset over the same data &mdash; that audit is planned and not done. Until it happens,
+            these are our numbers, not externally verified ones.
           </p>
         </div>
         <p className="mt-3 text-sm">
@@ -607,14 +614,14 @@ function Dashboard() {
         <h2 className="text-lg font-semibold text-slate-900">Risk note</h2>
         <p className="mt-2 text-sm text-slate-700">{payload.disclaimer}</p>
         <p className="mt-3 text-sm text-slate-700">
-          Measured performance: {payload.measuredPerformance === "none" ? "none yet" : "see notes"}.
-          There is no track record on this page because none has been measured. Nothing here is a
+          Historical backtests: negative at hourly and daily granularity.
+          See the backtest and signal record pages for their separate measurements. Nothing here is a
           prediction, and leverage can lose more than is put in.
         </p>
       </section>
 
       <footer className="mt-8 pb-4 text-xs text-slate-500">
-        Personal use tool. No accounts, no order placement, no data collected. Hourly bars from the
+        Personal use tool. Practice execution is available only through the authenticated execution console or backend operator. Hourly bars from the
         owner&rsquo;s own broker account feed, with only broker-completed bars used. Bid/ask figures
         are indicative {payload.data.primary.accountType} account quotes shown as a cost input only.
       </footer>

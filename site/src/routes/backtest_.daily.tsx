@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
+import { ProvenanceLine, SkippedNotes } from "~/components/DataProvenance";
+import type { Provenance, SkippedCandidate } from "~/lib/market/bundledData";
 import {
   loadDailyBacktestResults,
   type DailyDerived,
@@ -37,15 +39,18 @@ export const Route = createFileRoute("/backtest_/daily")({
       ok: boolean;
       payload?: DailyPayload;
       derived?: DailyDerived;
+      provenance?: Provenance;
       error?: string;
+      skipped?: SkippedCandidate[];
     };
-    if (!body.ok || !body.payload || !body.derived) {
+    if (!body.ok || !body.payload || !body.derived || !body.provenance) {
       return {
         ok: false,
+        skipped: body.skipped ?? [],
         error: body.error ?? `The daily backtest endpoint answered HTTP ${String(res.status)}.`,
       };
     }
-    return { ok: true, payload: body.payload, derived: body.derived };
+    return { ok: true, payload: body.payload, derived: body.derived, provenance: body.provenance };
   },
   component: DailyBacktestPage,
 });
@@ -146,6 +151,7 @@ function DailyBacktestPage() {
         <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900">
           <p className="font-semibold">The daily-bar measurement is unavailable right now.</p>
           <p className="mt-2">{load.error}</p>
+          <SkippedNotes skipped={load.skipped} />
           <p className="mt-2">
             This page shows no figure rather than a remembered one.{" "}
             <a className="underline" href="/backtest">
@@ -219,6 +225,7 @@ function DailyBacktestPage() {
           <span className="font-mono">{p.granularity}</span> (daily) bars from the owner&rsquo;s own
           broker account.
         </p>
+        <ProvenanceLine provenance={load.provenance} what="the daily backtest result" />
         <p className="mt-2 text-sm">
           <a className="font-medium text-slate-900 underline" href="/backtest">
             ← Hourly backtest (the ruleset the dashboard runs)
@@ -936,6 +943,18 @@ function DailyBacktestPage() {
         <p className="mt-2 text-sm text-slate-700">
           Every figure above is read from the daily run&rsquo;s results file, which is kept and can be
           re-checked against this page. Where a number is negative, it is shown negative.
+        </p>
+        <p className="mt-3 text-sm text-slate-700">
+          <strong className="font-semibold">
+            Our own measurement, not an independent verification.
+          </strong>{" "}
+          Every figure here has been checked for internal consistency: it matches the stored results
+          file, and the daily run is driven by the same rule and indicator code the dashboard runs.
+          That is self-consistency, and it is not the same thing as independent confirmation. A
+          second, independently written replay of this ruleset over the same stored data &mdash;
+          compared trade by trade &mdash; is a planned item that has <em>not</em> been done. Until it
+          is, treat these numbers as this project&rsquo;s own measurement, reported honestly, and not
+          as verified by anyone else.
         </p>
       </section>
 

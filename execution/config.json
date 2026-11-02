@@ -10,7 +10,7 @@
     "lib/interlock.ts and the order path asserts it on every request."
   ],
   "mode": "signals-only",
-  "useTestProfile": true,
+  "useTestProfile": false,
   "automaticAcknowledged": false,
   "acknowledgedBy": null,
   "ownerSettings": {},

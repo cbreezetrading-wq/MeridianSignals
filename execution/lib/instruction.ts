@@ -6,7 +6,6 @@
  * refusal with a named reason — never a default.
  */
 
-import type { Client } from "./client.ts";
 import { num, type ResolvedSettings } from "./config.ts";
 
 export type Direction = "long" | "short";
@@ -133,6 +132,7 @@ export function validateInstruction(instruction: Partial<SignalInstruction>, now
     issues.push({ field: "takeProfitPrice", reason: `a short's target (${String(i.takeProfitPrice)}) must sit below the source bar close (${String(bar?.close)})` });
   }
 
+  if (isIso(i.generatedAt) && Date.parse(i.generatedAt) > now.getTime()) issues.push({ field: "generatedAt", reason: "Future signals cannot execute" });
   // Expiry.
   if (isIso(i.expiryAt)) {
     const exp = Date.parse(i.expiryAt);
