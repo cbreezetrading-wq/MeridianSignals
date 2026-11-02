@@ -8,6 +8,8 @@
     "build": "vite build",
     "start": "bun run serve.ts",
     "publish": "bash ./publish.sh",
+    "bundle-data": "bun run scripts/bundle-data-cli.ts",
+    "bundle-data:check": "bun run scripts/bundle-data-cli.ts --check",
     "go-live": "bash ./go-live.sh",
     "format": "prettier --write ."
   },

@@ -8,12 +8,18 @@
  * the page prints therefore comes from results.json, and the page can be
  * checked against that file line by line.
  *
- * If the file cannot be read the payload is `null` and the page says so. A
+ * Where the bytes come from is decided by resolveData() in bundledData.ts, in one
+ * documented order: env override → the shared path on the owner's machine → the
+ * snapshot bundled into this build → nothing. Every figure below is read from
+ * whichever of those supplied the file, unchanged.
+ *
+ * If none of them can be read the payload is `null` and the page says so. A
  * missing file never becomes a remembered or plausible-looking number.
  */
+import { resolveData, type Provenance, type SkippedCandidate } from "./bundledData";
 
-export const BACKTEST_RESULTS_PATH =
-  process.env.BACKTEST_RESULTS_PATH ?? "/home/team/shared/backtest/results.json";
+/** The env override honoured for this file (see bundledData.ts). */
+export const BACKTEST_RESULTS_ENV = "BACKTEST_RESULTS_PATH";
 
 export type VariantStats = {
   trades: number;
@@ -122,22 +128,20 @@ export type BacktestPayload = {
 };
 
 export type BacktestLoad =
-  | { ok: true; payload: BacktestPayload }
-  | { ok: false; error: string };
+  | { ok: true; payload: BacktestPayload; provenance: Provenance }
+  | { ok: false; error: string; skipped: SkippedCandidate[] };
 
 export async function loadBacktestResults(): Promise<BacktestLoad> {
-  let raw: string;
-  try {
-    // Lazy, so the browser bundle never tries to resolve node:fs (see trackRecord.ts).
-    const { readFile } = await import("node:fs/promises");
-    raw = await readFile(BACKTEST_RESULTS_PATH, "utf8");
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code ?? "unknown error";
+  const resolved = await resolveData("backtest");
+  if (!resolved.ok) {
     return {
       ok: false,
-      error: `The backtest results file could not be read (${code}). Nothing on this page is available — no figure is shown from memory or from an earlier run.`,
+      skipped: resolved.skipped,
+      error: `The backtest results file could not be read (${resolved.error}). Nothing on this page is available — no figure is shown from memory or from an earlier run.`,
     };
   }
+  const raw = resolved.text;
+  const skipped = resolved.provenance.skipped;
 
   let parsed: Record<string, unknown>;
   try {
@@ -145,6 +149,7 @@ export async function loadBacktestResults(): Promise<BacktestLoad> {
   } catch {
     return {
       ok: false,
+      skipped,
       error:
         "The backtest results file is present but could not be parsed. Nothing on this page is available rather than showing a partial reading.",
     };
@@ -154,5 +159,5 @@ export async function loadBacktestResults(): Promise<BacktestLoad> {
   const { tradesHeadline: _trades, liveSignalsRaw: _live, ...rest } = parsed;
   void _trades;
   void _live;
-  return { ok: true, payload: rest as unknown as BacktestPayload };
+  return { ok: true, payload: rest as unknown as BacktestPayload, provenance: resolved.provenance };
 }

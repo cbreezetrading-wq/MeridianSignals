@@ -15,6 +15,14 @@ mkdir -p .run
 # the image's pre-built copy), so the first publish installs deps here. No-op
 # once node_modules is current.
 bun install
+
+# Copy the three published data files (two backtest results, one signal log) into
+# src/data/bundled, then prove the copy against its source. Both steps fail loudly:
+# a missing bundle, a bundle that does not match its manifest, or a bundle older
+# than its source file stops the publish instead of shipping stale or absent data.
+bun run bundle-data
+bun run bundle-data:check
+
 bun run build
 setsid nohup bun run start > .run/server.log 2>&1 < /dev/null &
 

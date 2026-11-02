@@ -1,12 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
+import { ProvenanceLine, SkippedNotes } from "~/components/DataProvenance";
 import {
   loadBacktestResults,
   type BacktestLoad,
   type BacktestPayload,
   type YearRow,
 } from "~/lib/market/backtestResults";
+import type { Provenance, SkippedCandidate } from "~/lib/market/bundledData";
 
 /**
  * /backtest — what the ruleset actually did over the owner's own broker history.
@@ -34,14 +36,21 @@ export const Route = createFileRoute("/backtest")({
   loader: async (): Promise<BacktestLoad> => {
     if (typeof window === "undefined") return await loadBacktestResults();
     const res = await fetch("/api/backtest", { headers: { accept: "application/json" } });
-    const body = (await res.json()) as { ok: boolean; payload?: BacktestPayload; error?: string };
-    if (!body.ok || !body.payload) {
+    const body = (await res.json()) as {
+      ok: boolean;
+      payload?: BacktestPayload;
+      provenance?: Provenance;
+      error?: string;
+      skipped?: SkippedCandidate[];
+    };
+    if (!body.ok || !body.payload || !body.provenance) {
       return {
         ok: false,
+        skipped: body.skipped ?? [],
         error: body.error ?? `The backtest endpoint answered HTTP ${String(res.status)}.`,
       };
     }
-    return { ok: true, payload: body.payload };
+    return { ok: true, payload: body.payload, provenance: body.provenance };
   },
   component: BacktestPage,
 });
@@ -136,6 +145,7 @@ function BacktestPage() {
         <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900">
           <p className="font-semibold">The measured result is unavailable right now.</p>
           <p className="mt-2">{load.error}</p>
+          <SkippedNotes skipped={load.skipped} />
           <p className="mt-2">
             This page shows no figure rather than a remembered one.{" "}
             <a className="underline" href="/">
@@ -203,6 +213,7 @@ function BacktestPage() {
           {group(String(net.trades))} trades over four pairs on hourly bars from the owner&rsquo;s own
           broker account.
         </p>
+        <ProvenanceLine provenance={load.provenance} what="the hourly backtest result" />
         <p className="mt-2 text-sm">
           <a className="font-medium text-slate-900 underline" href="/">
             ← Dashboard
@@ -798,6 +809,18 @@ function BacktestPage() {
         <p className="mt-2 text-sm text-slate-700">
           Every figure above is read from the run&rsquo;s results file, which is kept and can be
           re-checked against this page. Where a number is negative, it is shown negative.
+        </p>
+        <p className="mt-3 text-sm text-slate-700">
+          <strong className="font-semibold">
+            Our own measurement, not an independent verification.
+          </strong>{" "}
+          Every figure here has been checked for internal consistency: it matches the stored results
+          file, and the live engine reproduces the dashboard&rsquo;s current signals from the same
+          rule and indicator code. That is self-consistency, and it is not the same thing as
+          independent confirmation. A second, independently written replay of this ruleset over the
+          same stored data &mdash; compared trade by trade &mdash; is a planned item that has{" "}
+          <em>not</em> been done. Until it is, treat these numbers as this project&rsquo;s own
+          measurement, reported honestly, and not as verified by anyone else.
         </p>
       </section>
 

@@ -393,6 +393,12 @@ function Dashboard() {
             </a>
             .
           </p>
+          <p className="mt-2 text-xs text-rose-800">
+            Both results are this project&rsquo;s own measurement. They have been checked for internal
+            consistency, but no second, independently written implementation has yet replayed the
+            ruleset over the same data &mdash; that audit is planned and not done. Until it happens,
+            these are our numbers, not externally verified ones.
+          </p>
         </div>
         <p className="mt-3 text-sm">
           <a className="font-medium text-slate-900 underline" href="/track-record">

@@ -15,9 +15,36 @@ import type { PairSignal, SignalsPayload } from "./types";
  * the standalone verifier at /home/team/shared/signal-log/verify-chain.ts.
  */
 
-/** Where the log lives — deliberately OUTSIDE the site directory, so no build,
- *  publish or deploy can ever overwrite it. */
-export const LOG_PATH = process.env.SIGNAL_LOG_PATH ?? "/home/team/shared/signal-log/signals.jsonl";
+/**
+ * Where the log is read from, and when it may be written to.
+ *
+ * Reads go through resolveData("signal-log") in bundledData.ts, in the same
+ * documented order as the backtest files: env override → the shared path on the
+ * owner's machine → the snapshot bundled into this build → nothing. On the
+ * published site the owner's machine is unreachable, so the page serves the
+ * publish-time snapshot and says so, with its cutoff and record count.
+ *
+ * Writes are narrower than reads, on purpose. This module only ever APPENDS to a
+ * log file that already exists on this machine; it never creates one and it never
+ * continues a chain from a snapshot. Before that rule existed, the published host —
+ * which cannot see /home/team/shared — created an empty log there and presented it
+ * as the beginning of the record: four records, and "Log begins" reading like the
+ * start of history. A fresh or partial log must never impersonate the record, so a
+ * missing file now means "read-only", never "start a new one".
+ */
+import { resolveData, type BundledSnapshot, type Provenance } from "./bundledData";
+
+/** The env override honoured for the log (see bundledData.ts). */
+export const SIGNAL_LOG_ENV = "SIGNAL_LOG_PATH";
+
+/** Where the owner's log lives when no override is set. */
+export const DEFAULT_LOG_PATH = "/home/team/shared/signal-log/signals.jsonl";
+
+/** The path this deployment is configured to read (and, on the owner's machine, append to). */
+export function configuredLogPath(): string {
+  const override = typeof process === "undefined" ? undefined : process.env[SIGNAL_LOG_ENV];
+  return override !== undefined && override.trim() !== "" ? override : DEFAULT_LOG_PATH;
+}
 
 /** The prevHash of the very first record: 64 zeroes. */
 export const GENESIS_HASH = "0".repeat(64);
@@ -86,14 +113,25 @@ export type VerifyResult = {
 };
 
 export type LogSummary = {
+  /** The path this deployment reads (and, on the owner's machine, appends to). */
   logPath: string;
+  /**
+   * "file" when the bytes came from a file on this machine (the owner's live log),
+   * "bundle" when they came from the snapshot taken at publish time, "none" when
+   * neither could be read — in which case nothing is shown at all.
+   */
+  origin: "file" | "bundle" | "none";
+  /** The snapshot's description, present only when origin === "bundle". */
+  bundled: BundledSnapshot | null;
+  /** False when no log could be read: the page then says so instead of showing an empty record. */
+  available: boolean;
   recordCount: number;
   beginsAt: string | null;
   lastRecordedAt: string | null;
   secondsSinceLastRecord: number | null;
   heartbeatSeconds: number;
   fileBytes: number;
-  /** A file that has never been written yet. */
+  /** A file that exists and has never been written to. Not the same as "unavailable". */
   empty: boolean;
 };
 
@@ -150,26 +188,73 @@ async function fs(): Promise<FsPromises> {
   return fsModule;
 }
 
-/** Minimal dirname, to avoid importing node:path into the same graph. */
-function dirnameOf(filePath: string): string {
-  const cut = filePath.lastIndexOf("/");
-  return cut <= 0 ? "/" : filePath.slice(0, cut);
-}
-
 export function getLogPath(): string {
-  return LOG_PATH;
+  return configuredLogPath();
 }
 
-async function readLogRaw(): Promise<{ text: string; bytes: number; exists: boolean }> {
-  const { readFile, stat } = await fs();
+export type LogRead = {
+  text: string;
+  bytes: number;
+  /** "file" = a log on this machine; "bundle" = the publish-time snapshot; "none" = neither. */
+  origin: "file" | "bundle" | "none";
+  bundled: BundledSnapshot | null;
+  provenance: Provenance | null;
+  /** True only for a log file on this machine — the one case where appending is allowed. */
+  writableSource: boolean;
+  /** Why nothing could be read, when origin === "none". */
+  error: string | null;
+};
+
+/**
+ * Read the log through the shared resolution order (see bundledData.ts). A missing
+ * log is reported as missing — it is never turned into an empty string that could
+ * be mistaken for the beginning of the record.
+ */
+async function readLogRaw(): Promise<LogRead> {
+  const resolved = await resolveData("signal-log");
+  if (!resolved.ok) {
+    return {
+      text: "",
+      bytes: 0,
+      origin: "none",
+      bundled: null,
+      provenance: null,
+      writableSource: false,
+      error: resolved.error,
+    };
+  }
+  const provenance = resolved.provenance;
+  const isBundle = provenance.origin === "bundle";
+  return {
+    text: resolved.text,
+    bytes: provenance.bytes,
+    origin: isBundle ? "bundle" : "file",
+    bundled: provenance.bundled,
+    provenance,
+    writableSource: !isBundle,
+    error: null,
+  };
+}
+
+/**
+ * Appending is allowed only to a log file that already exists on this machine.
+ * No mkdir, no create: on the published host the shared directory does not exist,
+ * and creating it there is exactly how a fresh four-record log came to be shown as
+ * the beginning of the record.
+ */
+async function appendTarget(): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const path = configuredLogPath();
+  const { stat } = await fs();
   try {
-    const info = await stat(LOG_PATH);
-    const text = await readFile(LOG_PATH, "utf8");
-    return { text, bytes: info.size, exists: true };
+    const info = await stat(path);
+    if (!info.isFile()) return { ok: false, reason: `${path} is not a regular file` };
+    return { ok: true };
   } catch (error) {
-    const code = (error as { code?: string }).code;
-    if (code === "ENOENT") return { text: "", bytes: 0, exists: false };
-    throw error;
+    const code = (error as { code?: string }).code ?? "unknown error";
+    return {
+      ok: false,
+      reason: `the log file ${path} does not exist on this machine (${code}), and this deployment never creates one`,
+    };
   }
 }
 
@@ -191,7 +276,13 @@ let queue: Promise<unknown> = Promise.resolve();
 /** Rebuild the in-memory view of the log (last hash + last record per pair). */
 async function loadState(): Promise<LoadedState> {
   if (state) return state;
-  const { text } = await readLogRaw();
+  const raw = await readLogRaw();
+  if (raw.origin !== "file") {
+    throw new Error(
+      `the signal log is not a file on this machine (${raw.origin}), so the chain cannot be extended from it`,
+    );
+  }
+  const { text } = raw;
   const pairs = new Map<string, { key: string; recordedAtMs: number }>();
   let lastHash = GENESIS_HASH;
   let seq = 0;
@@ -298,6 +389,10 @@ export type AppendResult = {
   skipped: number;
   seq: number;
   logPath: string;
+  /** True when nothing was written because there is no log file on this machine. */
+  readOnly: boolean;
+  /** Why nothing was written, when readOnly is true. */
+  reason: string | null;
 };
 
 /**
@@ -315,6 +410,19 @@ export function recordFromPayload(payload: SignalsPayload): Promise<AppendResult
 }
 
 async function appendForPayload(payload: SignalsPayload): Promise<AppendResult> {
+  // No log file on this machine means read-only: report it, never create one.
+  const target = await appendTarget();
+  if (!target.ok) {
+    return {
+      appended: 0,
+      skipped: payload.pairs.length,
+      seq: 0,
+      logPath: configuredLogPath(),
+      readOnly: true,
+      reason: target.reason,
+    };
+  }
+
   const loaded = await loadState();
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
@@ -348,18 +456,26 @@ async function appendForPayload(payload: SignalsPayload): Promise<AppendResult> 
   }
 
   if (lines.length > 0) {
-    const { appendFile, mkdir } = await fs();
-    await mkdir(dirnameOf(LOG_PATH), { recursive: true });
-    // One appendFile of one complete, newline-terminated buffer. Never a rewrite.
+    const { appendFile } = await fs();
+    const path = configuredLogPath();
+    // One appendFile of one complete, newline-terminated buffer. Never a rewrite,
+    // and never a mkdir: the file's directory already exists because the file does.
     const body = (loaded.torn ? "\n" : "") + lines.join("\n") + "\n";
-    await appendFile(LOG_PATH, body, { encoding: "utf8", mode: 0o664 });
+    await appendFile(path, body, { encoding: "utf8", mode: 0o664 });
     loaded.torn = false;
   }
 
   loaded.seq = seq;
   loaded.lastHash = prevHash;
 
-  return { appended: lines.length, skipped, seq, logPath: LOG_PATH };
+  return {
+    appended: lines.length,
+    skipped,
+    seq,
+    logPath: configuredLogPath(),
+    readOnly: false,
+    reason: null,
+  };
 }
 
 /* ------------------------------------------------------------------- verifying */
@@ -442,7 +558,7 @@ export async function verifyChain(): Promise<VerifyResult> {
   return {
     ok: firstBreak === null,
     algorithm: HASH_ALGORITHM,
-    logPath: LOG_PATH,
+    logPath: configuredLogPath(),
     recordCount,
     recordsChecked,
     firstBreak,
@@ -456,34 +572,34 @@ export async function verifyChain(): Promise<VerifyResult> {
 }
 
 /**
- * Verification cache: a full walk is repeated only when the file has actually
- * changed (size or mtime), so client polling does not re-hash the log every minute.
- * `cached: true` is reported on the page so the shortcut is visible, not hidden.
+ * Verification cache: a full walk is repeated only when the bytes have actually
+ * changed (a file's size+mtime, or a snapshot's copy time and size), so client
+ * polling does not re-hash the log every minute. `cached: true` is reported on the
+ * page so the shortcut is visible, not hidden.
  */
-let verifyCache: { size: number; mtimeMs: number; result: VerifyResult } | null = null;
+let verifyCache: { revision: string; result: VerifyResult } | null = null;
+
+/** A cheap fingerprint of the bytes a read would return. */
+async function logRevision(): Promise<string> {
+  const raw = await readLogRaw();
+  if (raw.origin === "none") return "none";
+  if (raw.origin === "bundle") return `bundle:${raw.bundled?.copiedAt ?? "?"}:${String(raw.bytes)}`;
+  const { stat } = await fs();
+  try {
+    const info = await stat(configuredLogPath());
+    return `file:${String(info.size)}:${String(info.mtimeMs)}`;
+  } catch {
+    return `file:unknown:${String(raw.bytes)}`;
+  }
+}
 
 export async function verifyChainCached(force = false): Promise<VerifyResult> {
-  const { stat } = await fs();
-  let size = -1;
-  let mtimeMs = -1;
-  try {
-    const info = await stat(LOG_PATH);
-    size = info.size;
-    mtimeMs = info.mtimeMs;
-  } catch {
-    size = -1;
-    mtimeMs = -1;
-  }
-  if (
-    !force &&
-    verifyCache &&
-    verifyCache.size === size &&
-    verifyCache.mtimeMs === mtimeMs
-  ) {
+  const revision = await logRevision();
+  if (!force && verifyCache && verifyCache.revision === revision) {
     return { ...verifyCache.result, cached: true };
   }
   const result = await verifyChain();
-  verifyCache = { size, mtimeMs, result };
+  verifyCache = { revision, result };
   return { ...result, cached: false };
 }
 
@@ -502,7 +618,8 @@ export async function readRecords(limit: number): Promise<SignalRecord[]> {
 }
 
 export async function logSummary(): Promise<LogSummary> {
-  const { text, bytes, exists } = await readLogRaw();
+  const raw = await readLogRaw();
+  const { text, bytes } = raw;
   const lines = text === "" ? [] : text.split("\n");
   let recordCount = 0;
   for (const line of lines) if (line.trim() !== "") recordCount += 1;
@@ -515,16 +632,30 @@ export async function logSummary(): Promise<LogSummary> {
     if (beginsAt === null) beginsAt = record.recordedAt;
     lastRecordedAt = record.recordedAt;
   }
+
+  // For a snapshot, "how long ago" is measured against the moment the copy was taken,
+  // not against now: a published snapshot is not stale, it is a dated snapshot, and
+  // saying "6 days ago" about a file that was cut an hour before the build would be
+  // the wrong story.
+  const referenceMs =
+    raw.origin === "bundle" && raw.bundled ? Date.parse(raw.bundled.copiedAt) : Date.now();
   const lastMs = lastRecordedAt === null ? null : Date.parse(lastRecordedAt);
+
   return {
-    logPath: LOG_PATH,
+    logPath: configuredLogPath(),
+    origin: raw.origin,
+    bundled: raw.bundled,
+    available: raw.origin !== "none",
     recordCount,
     beginsAt,
     lastRecordedAt,
-    secondsSinceLastRecord: lastMs === null || !Number.isFinite(lastMs) ? null : Math.round((Date.now() - lastMs) / 1000),
+    secondsSinceLastRecord:
+      lastMs === null || !Number.isFinite(lastMs) || !Number.isFinite(referenceMs)
+        ? null
+        : Math.max(0, Math.round((referenceMs - lastMs) / 1000)),
     heartbeatSeconds: HEARTBEAT_SECONDS,
     fileBytes: bytes,
-    empty: !exists || recordCount === 0,
+    empty: raw.origin !== "none" && recordCount === 0,
   };
 }
 
