@@ -395,10 +395,15 @@ function Dashboard() {
             .
           </p>
           <p className="mt-2 text-xs text-rose-800">
-            Both results are this project&rsquo;s own measurement. They have been checked for internal
-            consistency, but no second, independently written implementation has yet replayed the
-            ruleset over the same data &mdash; that audit is planned and not done. Until it happens,
-            these are our numbers, not externally verified ones.
+            <strong className="font-semibold">
+              The hourly backtest&rsquo;s headline result has been independently reproduced, trade for
+              trade
+            </strong>{" "}
+            &mdash; a separately written replay produced the same 3,789 trades and every published headline
+            figure. That covers the headline only: the hourly zero-cost variant is{" "}
+            <em>not</em> reproduced and is labelled as such where it appears, and the daily-bar result has
+            not been audited at all. Where a figure has not been independently confirmed, the page that
+            shows it says so.
           </p>
         </div>
         <p className="mt-3 text-sm">

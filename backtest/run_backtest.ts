@@ -10,8 +10,23 @@
  *           BID for a short.
  *   exits : at the opposite side (BID to close a long, ASK to close a short).
  *   The trigger bar's close is only known once that bar has finished, so it is never
- *   used as a headline fill. The trigger-close variant is reported separately and
- *   labelled as an optimistic upper bound.
+ *   used as a headline fill.
+ *
+ * The other two variants exist to decompose the cost, and each states its convention:
+ *
+ *   zeroCost_mid_nextBarOpen — identical timing to the headline, MID prices on both
+ *     sides: the mid OPEN of the bar after the trigger for the entry, the mid OPEN of
+ *     the bar after a rule-exit bar for a rule exit, and the same stop/target LEVEL
+ *     (a level is basis-independent). Spread removed, everything else held.
+ *     CORRECTED 2026-11-02: this variant used to take the mid CLOSE of those bars
+ *     instead of the mid OPEN, which re-timed every trade by one hour and inflated the
+ *     result by 503.9 pips (+4,289.1 vs the true +3,785.1). See
+ *     /home/team/shared/verify/audit-findings.md §5.1 and backtest-report.md §10.
+ *
+ *   optimisticUpperBound_triggerClose — a look-ahead on BOTH legs: the entry is the
+ *     mid close of the trigger bar, and a rule exit is the mid close of the cross bar.
+ *     Each leg is priced at the close of the bar that produced its signal, a level only
+ *     knowable once that bar has ended. Not achievable. Reported only as a ceiling.
  *
  * Intra-bar ambiguity is resolved pessimistically: if a bar's range touches both the
  * stop and the target, the STOP is taken. If a bar opens beyond the stop, the fill is
@@ -38,6 +53,16 @@ const PAIRS: PairCfg[] = [
 
 const HOUR_MS = 3_600_000;
 const YEAR_MS = 365 * 24 * HOUR_MS;
+
+/** The index runRulesetEvents() starts scanning at (it needs EMA(200) plus a previous bar). */
+const FIRST_EVALUATED_INDEX = 200;
+
+/**
+ * A year counts as genuinely hourly when at least this share of its consecutive-bar
+ * gaps are 1 hour or less. 90%, not 100%: even a real hourly series has weekend and
+ * holiday gaps. The years that fail it do not fail narrowly — 2003 and 2004 are 0%.
+ */
+const HOURLY_YEAR_SHARE = 0.9;
 
 /** One cached row: [t, mid o/h/l/c, ask o/h/l/c, bid o/h/l/c] */
 type Row = number[];
@@ -96,7 +121,15 @@ type Trade = {
   pips: number | null;
   r: number | null;
   spreadAtFillPips: number;
-  spreadCostPips: number | null;
+  /**
+   * The spread THIS trade crossed, in pips: the mid-priced gross at the same two
+   * instants the bid/ask fills used, minus what the bid/ask fills produced. A stop or
+   * target is a level, so it is basis-independent and contributes nothing on that leg —
+   * which is why this sums to roughly half of the headline-minus-zero-cost gap and is a
+   * decomposition of it, not a substitute for it. Renamed from `spreadCostPips`
+   * (2026-11-02), whose mid leg was priced at bar CLOSES and so mixed two instants.
+   */
+  spreadCrossingCostPips: number | null;
 };
 
 function iso(ms: number): string {
@@ -148,12 +181,15 @@ function replay(s: Series, variant: Variant): Trade[] {
     let scanFrom: number;
     if (fillAtClose) {
       fillIdx = i;
-      fillPrice = referenceEntry; // mid close of the trigger bar
+      fillPrice = referenceEntry; // mid close of the trigger bar — a look-ahead
       scanFrom = i + 1; // the trigger bar was already over when we filled
     } else {
       fillIdx = i + 1;
       if (fillIdx >= bars.length) break; // no bar left to fill on
-      fillPrice = mid ? closes[fillIdx]! : side === "long" ? ask[fillIdx]![0]! : bid[fillIdx]![0]!;
+      // Same instant in every variant: the OPEN of the bar after the trigger.
+      // (Until 2026-11-02 the mid variants took this bar's CLOSE instead, which
+      // re-timed the trade by an hour; see the file header.)
+      fillPrice = mid ? bars[fillIdx]!.o : side === "long" ? ask[fillIdx]![0]! : bid[fillIdx]![0]!;
       scanFrom = fillIdx; // we are in the market from this bar's open
     }
     const spreadAtFillPips = (ask[fillIdx]![0]! - bid[fillIdx]![0]!) / cfg.pip;
@@ -186,7 +222,7 @@ function replay(s: Series, variant: Variant): Trade[] {
         exitReason = why;
         if (fillAtClose) {
           exitIdx = j;
-          exitPrice = closes[j]!;
+          exitPrice = closes[j]!; // the cross bar's own close — a look-ahead
         } else {
           if (j + 1 >= bars.length) {
             exitIdx = null;
@@ -195,7 +231,8 @@ function replay(s: Series, variant: Variant): Trade[] {
             break;
           }
           exitIdx = j + 1;
-          exitPrice = mid ? closes[j + 1]! : side === "long" ? bid[j + 1]![0]! : ask[j + 1]![0]!;
+          // Same instant in every variant: the OPEN of the bar after the cross.
+          exitPrice = mid ? bars[j + 1]!.o : side === "long" ? bid[j + 1]![0]! : ask[j + 1]![0]!;
         }
         break;
       }
@@ -205,13 +242,16 @@ function replay(s: Series, variant: Variant): Trade[] {
     const grossPips = openTrade
       ? null
       : (side === "long" ? (exitPrice! - fillPrice) : (fillPrice - exitPrice!)) / cfg.pip;
-    // Cost actually paid relative to a mid-to-mid round trip, in pips.
-    let spreadCostPips: number | null = null;
+    // The spread crossed on this trade's own fills, in pips: the same two instants
+    // priced at MID, minus what the bid/ask fills produced. A stop/target level is the
+    // same price on either basis, so it contributes nothing on the exit leg.
+    let spreadCrossingCostPips: number | null = null;
     if (!openTrade) {
-      const midEntry = mid ? fillPrice : closes[fillIdx]!;
-      const midExit = mid ? exitPrice! : closes[exitIdx!]!;
+      const midEntry = bars[fillIdx]!.o;
+      const midExit =
+        exitReason === "stop" || exitReason === "target" ? exitPrice! : bars[exitIdx!]!.o;
       const midGross = (side === "long" ? midExit - midEntry : midEntry - midExit) / cfg.pip;
-      spreadCostPips = midGross - grossPips!;
+      spreadCrossingCostPips = midGross - grossPips!;
     }
 
     trades.push({
@@ -234,7 +274,7 @@ function replay(s: Series, variant: Variant): Trade[] {
       pips: grossPips,
       r: grossPips === null ? null : grossPips / riskPips,
       spreadAtFillPips,
-      spreadCostPips,
+      spreadCrossingCostPips,
     });
   }
   return trades;
@@ -328,6 +368,51 @@ function yearByYear(trades: Trade[]) {
   });
 }
 
+/**
+ * How much of this file is actually hourly. The broker's H1 history is a DAILY series
+ * until January 2005 — for 2003, none of the ~324 gaps between consecutive bars is an
+ * hour or less — so the first ~2.6 years of this file cannot support an hourly backtest.
+ * Measured here rather than asserted, and stored in the results.
+ */
+function hourlyCoverage(s: Series) {
+  const perYear: Record<string, { gaps: number; gapsWithinHour: number; bars: number }> = {};
+  for (let i = 0; i < s.tMs.length; i++) {
+    const y = String(new Date(s.tMs[i]!).getUTCFullYear());
+    const row = (perYear[y] ??= { gaps: 0, gapsWithinHour: 0, bars: 0 });
+    row.bars += 1;
+    if (i > 0) {
+      row.gaps += 1;
+      if (s.tMs[i]! - s.tMs[i - 1]! <= HOUR_MS) row.gapsWithinHour += 1;
+    }
+  }
+  const years = Object.keys(perYear).sort();
+  // The FIRST year at or after which the file is hourly: the earliest year whose own
+  // share of <= 1-hour gaps clears the threshold. Later years are not required to clear
+  // it again (a quiet year can be mostly weekend gaps), so this is the start of hourly
+  // coverage, not a promise that every later year looks identical.
+  const hourlyFromYear = years.find((y) => {
+    const row = perYear[y]!;
+    return row.gaps > 0 && row.gapsWithinHour / row.gaps >= HOURLY_YEAR_SHARE;
+  }) ?? null;
+  let hourlyFromUtc: string | null = null;
+  let barsBefore = 0;
+  if (hourlyFromYear !== null) {
+    for (let i = 0; i < s.tMs.length; i++) {
+      const y = String(new Date(s.tMs[i]!).getUTCFullYear());
+      if (y < hourlyFromYear) barsBefore += 1;
+      else if (hourlyFromUtc === null) hourlyFromUtc = iso(s.tMs[i]!);
+    }
+  }
+  return {
+    label: s.cfg.label,
+    bars: s.bars.length,
+    perYear,
+    hourlyFromUtc,
+    barsBeforeHourlyFrom: barsBefore,
+    dailyResolutionPrelude: hourlyFromUtc !== null && barsBefore > 0,
+  };
+}
+
 /* ------------------------------------------------------------------------ main */
 
 async function main(): Promise<void> {
@@ -390,15 +475,32 @@ async function main(): Promise<void> {
       .map((t) => t.spreadAtFillPips)
       .sort((a, b) => a - b);
     const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const headlineTrades = perVariant.headline![s.cfg.instrument]!.filter((t) => t.pips !== null);
+    const zeroTrades = perVariant.zeroCost![s.cfg.instrument]!.filter((t) => t.pips !== null);
+    const crossing = headlineTrades
+      .map((t) => t.spreadCrossingCostPips)
+      .filter((x): x is number => x !== null);
     spreads[s.cfg.label] = {
       allBarsMeanSpreadPips: round(mean(all), 3),
       allBarsMedianSpreadPips: round(all[Math.floor(all.length / 2)]!, 3),
       meanSpreadAtEntryFillPips: onFills.length === 0 ? null : round(mean(onFills), 3),
       medianSpreadAtEntryFillPips: onFills.length === 0 ? null : round(onFills[Math.floor(onFills.length / 2)]!, 3),
-      meanRoundTripSpreadCostPips: (() => {
-        const c = perVariant.headline![s.cfg.instrument]!.map((t) => t.spreadCostPips).filter((x): x is number => x !== null);
-        return c.length === 0 ? null : round(mean(c), 3);
-      })(),
+      /**
+       * THE per-trade spread cost for this pair: the achievable variant's total pips
+       * minus the zero-cost variant's total pips over the same trades, divided by the
+       * trade count. Both inputs are stored under results.*.fullPeriod.perPair, so the
+       * figure is a subtraction of two published totals and nothing else.
+       */
+      meanRoundTripSpreadCostPips:
+        headlineTrades.length === 0
+          ? null
+          : round(
+              (zeroTrades.reduce((a, t) => a + t.pips!, 0) - headlineTrades.reduce((a, t) => a + t.pips!, 0)) /
+                headlineTrades.length,
+              3,
+            ),
+      /** The crossing cost on the fills alone — a decomposition of the line above. */
+      meanSpreadCrossingCostPips: crossing.length === 0 ? null : round(mean(crossing), 3),
     };
   }
 
@@ -427,6 +529,79 @@ async function main(): Promise<void> {
     };
   }
 
+  /* ---- the spread cost, as ONE recomputable figure ------------------------ */
+  const headlineAll = pooled(series.map((s) => perVariant.headline![s.cfg.instrument]!)).filter((t) => t.pips !== null);
+  const zeroAll = pooled(series.map((s) => perVariant.zeroCost![s.cfg.instrument]!)).filter((t) => t.pips !== null);
+  const headlineTotalPips = round(headlineAll.reduce((a, t) => a + t.pips!, 0), 1);
+  const zeroTotalPips = round(zeroAll.reduce((a, t) => a + t.pips!, 0), 1);
+  const variantDiffPips = round(zeroTotalPips - headlineTotalPips, 1);
+  const crossingAll = headlineAll
+    .map((t) => t.spreadCrossingCostPips)
+    .filter((x): x is number => x !== null);
+  const crossingTotalPips = round(crossingAll.reduce((a, b) => a + b, 0), 1);
+
+  const spreadCost = {
+    headlineTotalPips,
+    zeroCostTotalPips: zeroTotalPips,
+    trades: headlineAll.length,
+    /**
+     * THE figure: what the spread costs per trade in this model.
+     * = achievable total − zero-cost total, over the same trades at the same timings.
+     * Recomputable as a single subtraction of two stored totals.
+     */
+    perTradePips: round(variantDiffPips / headlineAll.length, 3),
+    totalPips: variantDiffPips,
+    definition:
+      "the zero-cost variant's total pips minus the achievable variant's total pips, over the same trades with identical entry and exit timing, divided by the trade count — i.e. the same subtraction the reader can do on the two stored totals",
+    crossingCost: {
+      totalPips: crossingTotalPips,
+      perTradePips: round(crossingTotalPips / headlineAll.length, 3),
+      note:
+        "the part of the figure above paid at the moment of the fills: the same fills priced at mid minus the bid/ask fills. A stop or target is a level and costs the same on either basis, so this is roughly half the total; the rest is the change in WHEN a bid-tested stop or target is first touched once the spread is removed from the price series.",
+    },
+    supersedes: [
+      {
+        figure: "8,530 pips / 2.25 pips per trade",
+        what: "headline minus the zero-cost variant",
+        why: "right definition, wrong input: the zero-cost variant was priced at bar CLOSES instead of the fills' bar OPENs, so it was 503.9 pips too high. Corrected to 8,026.1 / 2.118.",
+      },
+      {
+        figure: "9,387 pips / 2.48 pips per trade",
+        what: "the sum of the per-trade spreadCostPips field",
+        why: "that field priced its 'mid' leg at the CLOSE of the fill and exit bars — different instants from the fills — and double-counted the timing shift. Replaced by spreadCrossingCostPips, which sums to 4,237.8 and is a decomposition of the 8,026.1, not the figure itself.",
+      },
+      {
+        figure: "2.48 pips per trade in report §3",
+        what: "the unweighted mean of the four per-pair means of that same broken field",
+        why: "wrong field, and an unweighted average of per-pair averages is not the combined figure (943 trades on GBP/USD counted the same as 961 on EUR/USD). Replaced by the pooled 2.118, with the per-pair values 1.74 / 3.31 / 1.60 / 1.84.",
+      },
+    ],
+  };
+
+  /* ---- data resolution --------------------------------------------------- */
+  const coverage = series.map(hourlyCoverage);
+  const hourlyFromMs = Math.max(...coverage.map((c) => (c.hourlyFromUtc === null ? 0 : Date.parse(c.hourlyFromUtc))));
+  const tradesBeforeHourly = headlineAll.filter((t) => Date.parse(t.fillBarUtc) < hourlyFromMs);
+  const dataResolution = {
+    hourlyFromUtc: hourlyFromMs === 0 ? null : iso(hourlyFromMs),
+    measuredFrom: "the gap between consecutive bars in each pair's cached H1 file",
+    rule: `a calendar year counts as hourly when at least ${String(HOURLY_YEAR_SHARE * 100)}% of its consecutive-bar gaps are 1 hour or less; hourlyFromUtc is the first bar of the first year after which every year meets that`,
+    preludeNote:
+      "The broker's H1 history is a DAILY series until January 2005. Trades filled before hourlyFromUtc were taken on daily bars inside an hourly backtest, and the EMA(200)/ATR(14) warm-up feeding the first genuine hourly trades is computed over that mixed-resolution prelude.",
+    tradesFilledBeforeHourlyFrom: tradesBeforeHourly.length,
+    tradesFilledBeforeHourlyFromPips: round(tradesBeforeHourly.reduce((a, t) => a + t.pips!, 0), 1),
+    byYearOfFills: Object.fromEntries(
+      [...new Set(tradesBeforeHourly.map((t) => t.fillBarUtc.slice(0, 4)))].sort().map((y) => [
+        y,
+        {
+          trades: tradesBeforeHourly.filter((t) => t.fillBarUtc.slice(0, 4) === y).length,
+          totalPips: round(tradesBeforeHourly.filter((t) => t.fillBarUtc.slice(0, 4) === y).reduce((a, t) => a + t.pips!, 0), 1),
+        },
+      ]),
+    ),
+    perPair: coverage,
+  };
+
   // ---- reconciliation against the live engine ------------------------------
   let liveSignals: unknown = null;
   try {
@@ -436,6 +611,9 @@ async function main(): Promise<void> {
     liveSignals = { error: String(e).slice(0, 200) };
   }
   const recon: Record<string, unknown> = {};
+  const livePayload = liveSignals as
+    | { pairs?: { pair?: string; label?: string; signal?: string; entry?: number; latestBarUtc?: string; ruleFired?: { barUtc?: string } }[] }
+    | null;
   for (const s of series) {
     // Compare the live engine against the RULE EVENT STREAM, not against the trade
     // list: a trigger that fired on the very last cached bar has no next bar to fill
@@ -445,12 +623,16 @@ async function main(): Promise<void> {
     const opens = events.filter((e) => e.name.startsWith("opened"));
     const lastIdx = opens[opens.length - 1]?.index ?? null;
     const last = opens[opens.length - 1] ?? null;
-    const live = (liveSignals as { pairs?: { pair?: string; label?: string; signal?: string; entry?: number; ruleFired?: { barUtc?: string } }[] } | null)?.pairs?.find?.(
-      (p) => p.label === s.cfg.label,
-    );
+    const live = livePayload?.pairs?.find?.((p) => p.label === s.cfg.label);
     const barUtc = lastIdx === null ? null : iso(s.tMs[lastIdx]!);
     const close = lastIdx === null ? null : s.bars[lastIdx]!.c;
     const side = last === null ? null : last.name === "opened-long" ? "long" : "short";
+    // The comparison is only meaningful while the two windows coincide. The dashboard
+    // reads live bars; this run reads a cache that ends at a fixed date. Once the live
+    // window has moved past the cache, a mismatch says nothing about the rules and
+    // everything about the two windows, so it is recorded rather than called a failure.
+    const liveLatestMs = live?.latestBarUtc ? Date.parse(live.latestBarUtc) : null;
+    const comparable = liveLatestMs !== null && Math.abs(liveLatestMs - lastBarMs) <= 48 * HOUR_MS;
     recon[s.cfg.label] = {
       backtestLastTriggerBarUtc: barUtc,
       backtestSide: side,
@@ -458,6 +640,9 @@ async function main(): Promise<void> {
       liveSignal: live?.signal ?? null,
       liveEntry: live?.entry ?? null,
       liveTriggerBarUtc: live?.ruleFired?.barUtc ?? null,
+      liveLatestBarUtc: live?.latestBarUtc ?? null,
+      backtestCacheEndsUtc: iso(lastBarMs),
+      windowsCoincide: comparable,
       triggerIsOnFinalCachedBar: lastIdx !== null && lastIdx === s.bars.length - 1,
       triggerIsOnFinalCachedBarNote:
         lastIdx !== null && lastIdx === s.bars.length - 1
@@ -480,17 +665,47 @@ async function main(): Promise<void> {
       "/home/team/shared/site/src/lib/market/ruleset.ts (runRulesetEvents)",
       "/home/team/shared/site/src/lib/market/indicators.ts (ema, atr)",
     ],
+    /**
+     * Which figures in this file have been reproduced by a second, independently
+     * written implementation. Written here, next to the numbers, so a page cannot
+     * claim more than the record supports.
+     */
+    verification: {
+      auditedAt: "2026-11-02",
+      auditor: "independent replay written from the written specification, not from this code",
+      artifact: "/home/team/shared/verify/audit-findings.md",
+      headline: {
+        independentlyReproduced: true,
+        note:
+          "3,789 of 3,789 trades matched on trigger bar, side, entry price, exit price, exit reason, pips, R, risk and holding time; every published headline aggregate, per pair, per year and the held-out 12 months reproduce. The one trade not matched is the still-open USD/JPY one, excluded from both.",
+      },
+      zeroCost: {
+        independentlyReproduced: false,
+        note:
+          "NOT reproduced. The audit's faithful reading of the same convention gave +3,785.1 pips; the figure stored by the previous run was +4,289.1 because the mid leg was priced at bar CLOSES instead of the fills' bar OPENs. That defect is fixed here and this file now stores +3,785.x, which agrees with the audit to rounding. It has NOT been re-audited since the fix.",
+      },
+      optimistic: {
+        independentlyReproduced: false,
+        note:
+          "Reproduced exactly by the audit once its convention was identified, which is a look-ahead on BOTH legs (entry at the trigger bar's close, rule exit at the cross bar's close). Not re-checked since this run.",
+      },
+    },
     dataWindow,
+    dataResolution,
     measurementPeriod: {
-      headlineStartUtc: new Date(Math.min(...series.map((s) => s.tMs[220] ?? s.tMs[0]!))).toISOString(),
+      headlineStartUtc: iso(Math.min(...series.map((s) => s.tMs[FIRST_EVALUATED_INDEX] ?? s.tMs[0]!))),
       headlineEndUtc: iso(lastBarMs),
       heldOutLast12MonthsFromUtc: iso(heldOutCutMs),
-      note: "The ruleset cannot produce a first event before bar index 200 (EMA(200)); the measurement period is therefore the full cached span minus that warm-up.",
+      firstEvaluatedIndex: FIRST_EVALUATED_INDEX,
+      firstTradeUtc: headlineAll.length === 0 ? null : pooled([headlineAll])[0]!.triggerBarUtc,
+      note: `The ruleset cannot produce a first event before bar index ${String(FIRST_EVALUATED_INDEX)} (EMA(200) plus a previous bar), so the measurement period starts at the first bar it is evaluated on, not at the first bar in the cache.`,
     },
     assumptions: {
       fillHeadline: "entry at the NEXT bar's open, ASK for a long / BID for a short; exits at the opposite side. No look-ahead.",
-      fillOptimistic: "entry at the trigger bar's CLOSE (mid), exits at the exit bar's close (mid) — labelled OPTIMISTIC UPPER BOUND, not achievable.",
-      fillZeroCost: "same timing as headline (next-bar open) but at MID on both sides, so the spread drag is visible.",
+      fillZeroCost:
+        "identical timing to the headline at MID prices on both sides: entry at the mid OPEN of the bar after the trigger, a rule exit at the mid OPEN of the bar after the cross, and the same stop/target level (a level is basis-independent). No look-ahead. This is the same-bar-instant mid counterpart of the headline, and nothing else differs.",
+      fillOptimistic:
+        "BOTH legs are look-aheads: the entry is the trigger bar's mid CLOSE, and a rule exit is the cross bar's own mid CLOSE. Each leg is priced at the close of the bar that produced its signal — a price only knowable once that bar has ended. Labelled OPTIMISTIC UPPER BOUND, not achievable.",
       intraBarAmbiguity: "if a bar touches both stop and target, the STOP is counted first.",
       gaps: "a bar opening beyond the stop fills at that bar's open (worse than the stop); a bar opening beyond the target fills at that bar's open (better than the target).",
       ruleExit: "an exit the rules trigger at a bar's close is filled at the NEXT bar's open, same no-look-ahead rule as entries.",
@@ -508,13 +723,22 @@ async function main(): Promise<void> {
       "weekend/holiday gaps are left as gaps; no bar is interpolated or filled in",
     ],
     reconciliationWithLive: recon,
+    reconciliationWithLiveNote:
+      "This comparison is made at run time, between the engine replayed over the frozen cache and whatever the dashboard was serving when this run happened. It only means something while the two windows coincide; `windowsCoincide` records that, and a disagreement when they do not coincide is a fact about the two windows, not about the rules.",
+    spreadCost,
     spreadsPaid: spreads,
     holdingTimes: holding,
     results: {
       headline_nextBarOpen_bidAsk: { fullPeriod: summaryFor("headline", inFull), last12MonthsHeldOut: summaryFor("headline", inHoldout) },
-      zeroCost_mid_nextBarOpen: { fullPeriod: summaryFor("zeroCost", inFull), last12MonthsHeldOut: summaryFor("zeroCost", inHoldout) },
+      zeroCost_mid_nextBarOpen: {
+        convention: "mid OPEN on both sides, same bar instants as the headline; spread removed, timing held",
+        fullPeriod: summaryFor("zeroCost", inFull),
+        last12MonthsHeldOut: summaryFor("zeroCost", inHoldout),
+      },
       optimisticUpperBound_triggerClose: {
-        label: "OPTIMISTIC UPPER BOUND — fills at the trigger bar's close, which is only knowable after that bar has ended. NOT achievable in practice.",
+        label:
+          "OPTIMISTIC UPPER BOUND — BOTH the entry and the rule exit fill at the close of the bar that produced the signal, prices only knowable once those bars had ended. NOT achievable in practice.",
+        convention: "entry at the trigger bar's mid CLOSE, rule exit at the cross bar's mid CLOSE",
         fullPeriod: summaryFor("triggerClose", inFull),
         last12MonthsHeldOut: summaryFor("triggerClose", inHoldout),
       },
@@ -538,6 +762,7 @@ async function main(): Promise<void> {
     const mm = m as Record<string, unknown>;
     lines.push(`${k}: ${mm.bars} bars  ${mm.firstBarUtc} .. ${mm.lastBarUtc}  incomplete refused ${mm.incompleteCandlesRefused}`);
   }
+  lines.push(`hourly from ${String(dataResolution.hourlyFromUtc)}; trades filled on daily bars before that: ${String(dataResolution.tradesFilledBeforeHourlyFrom)} (${String(dataResolution.tradesFilledBeforeHourlyFromPips)} pips)`);
   for (const v of ["headline_nextBarOpen_bidAsk", "zeroCost_mid_nextBarOpen", "optimisticUpperBound_triggerClose"] as const) {
     lines.push(`--- ${v} ---`);
     const r = (results.results as Record<string, { fullPeriod: { perPair: Record<string, { trades: number; expectancyPipsPerTrade: number | null; totalPips: number; totalR: number; winRatePct: number | null }>; combined: Record<string, unknown> } }>)[v]!;
@@ -546,6 +771,13 @@ async function main(): Promise<void> {
     }
     const c = r.fullPeriod.combined as Record<string, unknown>;
     lines.push(`  COMBINED: n=${c.trades} win%=${c.winRatePct} exp=${c.expectancyPipsPerTrade} pips=${c.totalPips} R=${c.totalR} PF=${c.profitFactor} maxDDpips=${c.maxDrawdownPips} maxDDR=${c.maxDrawdownR}`);
+  }
+  lines.push("--- spread cost ---");
+  lines.push(`  headline ${String(spreadCost.headlineTotalPips)}  zeroCost ${String(spreadCost.zeroCostTotalPips)}  difference ${String(spreadCost.totalPips)} pips over ${String(spreadCost.trades)} trades = ${String(spreadCost.perTradePips)} pips/trade`);
+  lines.push(`  of which crossing cost on the fills: ${String(spreadCost.crossingCost.totalPips)} pips = ${String(spreadCost.crossingCost.perTradePips)} pips/trade`);
+  for (const [p, v] of Object.entries(spreads)) {
+    const vv = v as Record<string, unknown>;
+    lines.push(`  ${p}: mean round-trip spread cost ${String(vv.meanRoundTripSpreadCostPips)} pips/trade (crossing ${String(vv.meanSpreadCrossingCostPips)})`);
   }
   lines.push("--- reconciliation ---");
   for (const [p, r] of Object.entries(recon)) lines.push(`  ${p}: ${JSON.stringify(r)}`);

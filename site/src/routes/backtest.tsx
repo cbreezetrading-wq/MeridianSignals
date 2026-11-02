@@ -29,7 +29,7 @@ export const Route = createFileRoute("/backtest")({
       {
         name: "description",
         content:
-          "The measured result of the v1 ruleset over 2003–2026 on the owner's own broker data, after real historical bid/ask spreads: not tradeable, −4,241 pips. Assumptions, exclusions and the held-out period stated in full.",
+          "The measured result of the v1 ruleset over December 2002 – October 2026 on the owner's own broker data, after real historical bid/ask spreads: not tradeable, −4,241 pips. Assumptions, exclusions, the held-out period and what an independent replay did and did not reproduce, stated in full.",
       },
     ],
   }),
@@ -170,11 +170,17 @@ function BacktestPage() {
   const heldZero = zeroCost.last12MonthsHeldOut.combined;
   const heldOpt = optimistic.last12MonthsHeldOut.combined;
 
-  // Derived only by subtracting two figures that are both in results.json: the
-  // per-trade cost of acting is the gap between the zero-cost and the achievable
-  // expectancy. Nothing here is a new estimate.
-  const spreadPerTrade = gross.expectancyPipsPerTrade - net.expectancyPipsPerTrade;
+  // The one per-trade spread-cost figure, read from the run itself: zero-cost total
+  // minus achievable total over the same trades. The fallback is the same subtraction
+  // done on the two stored expectancies, so the page still shows a figure — and the
+  // same one — if an older results file without the block is what it was handed.
+  const spreadCost = p.spreadCost;
+  const spreadPerTrade = spreadCost?.perTradePips ?? gross.expectancyPipsPerTrade - net.expectancyPipsPerTrade;
+  const spreadTotal = spreadCost?.totalPips ?? gross.totalPips - net.totalPips;
   const costToEdge = gross.expectancyPipsPerTrade === 0 ? null : spreadPerTrade / gross.expectancyPipsPerTrade;
+
+  const verification = p.verification;
+  const resolution = p.dataResolution;
 
   const years = p.yearByYear.headline.combined;
   const positiveYears = years.filter((y) => y.totalPips > 0).length;
@@ -196,8 +202,6 @@ function BacktestPage() {
   const reconPairs = Object.keys(p.reconciliationWithLive);
   const holding = p.holdingTimes.combinedHeadline;
   const holdTotal = Object.values(holding.histogram).reduce((s, n) => s + n, 0);
-  const meanRoundTrip =
-    pairs.reduce((s, k) => s + (p.spreadsPaid[k]?.meanRoundTripSpreadCostPips ?? 0), 0) / pairs.length;
 
   return (
     <main className="mx-auto min-h-dvh w-full max-w-5xl px-5 py-10 text-slate-900">
@@ -213,6 +217,21 @@ function BacktestPage() {
           {group(String(net.trades))} trades over four pairs on hourly bars from the owner&rsquo;s own
           broker account.
         </p>
+        {resolution ? (
+          <p className="mt-2 text-sm text-slate-600">
+            <strong className="font-semibold">How much of that history is hourly:</strong>{" "}
+            {resolution.hourlyFromUtc ? `genuinely hourly from ${day(resolution.hourlyFromUtc)}` : "not established"}{" "}
+            — the broker&rsquo;s H1 file is a <strong className="font-semibold">daily</strong> series
+            before then. {group(String(resolution.tradesFilledBeforeHourlyFrom))} of the{" "}
+            {group(String(net.trades))} trades ({num(resolution.tradesFilledBeforeHourlyFromPips)} pips) were
+            filled on daily bars inside this hourly backtest; they are in the total, not removed from it.
+            See{" "}
+            <a className="underline" href="#data-window">
+              the data window
+            </a>
+            .
+          </p>
+        ) : null}
         <ProvenanceLine provenance={load.provenance} what="the hourly backtest result" />
         <p className="mt-2 text-sm">
           <a className="font-medium text-slate-900 underline" href="/">
@@ -318,10 +337,15 @@ function BacktestPage() {
               </tr>
               <tr>
                 <Td>
-                  <span className="font-semibold">Zero cost — same timing, at mid</span>
+                  <span className="font-semibold">Zero cost — same bar instants, at mid</span>
                   <div className="text-xs text-slate-600">
-                    Identical entries and exits, spread removed. This is the gross tendency of the rule,
-                    and it is positive — the cost is what kills it.
+                    The same entries and exits as the achievable row, priced at mid instead of bid/ask:
+                    entry at the mid <em>open</em> of the bar after the trigger, a rule exit at the mid{" "}
+                    <em>open</em> of the bar after the cross. Spread removed, timing held. This is the
+                    gross tendency of the rule, and it is positive — the cost is what kills it.
+                  </div>
+                  <div className="mt-1 text-xs font-semibold text-amber-800">
+                    Not independently reproduced. See the note below the table.
                   </div>
                 </Td>
                 <Td right>{group(String(gross.trades))}</Td>
@@ -337,9 +361,11 @@ function BacktestPage() {
                     Trigger-close fill — OPTIMISTIC UPPER BOUND, not achievable
                   </span>
                   <div className="text-xs text-slate-600">
-                    Fills at the trigger bar&rsquo;s own close, which is only knowable once that bar has
-                    ended. Nobody can trade this. It is here as a ceiling: even this flattering variant
-                    only reaches {num(opt.totalPips)} pips.
+                    <strong className="font-semibold">Both legs</strong> are filled at the close of the
+                    bar that produced the signal: the entry at the trigger bar&rsquo;s close, a rule exit
+                    at the cross bar&rsquo;s close. Each is a price only knowable once that bar has ended.
+                    Nobody can trade this. It is here as a ceiling: even this flattering variant only
+                    reaches {num(opt.totalPips)} pips.
                   </div>
                 </Td>
                 <Td right>{group(String(opt.trades))}</Td>
@@ -375,23 +401,57 @@ function BacktestPage() {
           next-bar-open timing). There is no version of this measurement in which the last twelve months
           look good.
         </p>
+        <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <p className="text-xs font-semibold tracking-wide text-amber-900 uppercase">
+            The zero-cost row: corrected, and still not independently reproduced
+          </p>
+          <p className="mt-2 text-sm text-amber-900">
+            An independently written replay of this ruleset reproduced the{" "}
+            <strong className="font-semibold">achievable row trade for trade</strong>. It did{" "}
+            <strong className="font-semibold">not</strong> reproduce the zero-cost row, and that row used to
+            read <span className="font-mono">+4,289.1 pips / PF 1.07 / 1.13 pips per trade</span>. The cause
+            was ours: the zero-cost code path priced its &ldquo;mid&rdquo; leg at the{" "}
+            <em>close</em> of the bar after the trigger instead of that bar&rsquo;s <em>open</em>, which
+            re-timed every trade by an hour on both legs and inflated the figure by 503.9 pips. Fixed on
+            2026-11-02, and the corrected figure is the one in the table:{" "}
+            <span className="font-mono">
+              {num(gross.totalPips)} pips / PF {num(gross.profitFactor, 2)} /{" "}
+              {num(gross.expectancyPipsPerTrade, 2)} pips per trade
+            </span>
+            , which agrees with the independent replay to rounding. The correction has{" "}
+            <strong className="font-semibold">not itself been re-audited</strong>, so this row is still
+            labelled unreproduced: it is our own measurement of a convention the audit has not re-checked.
+          </p>
+          <p className="mt-2 text-sm text-amber-900">
+            The conclusion does not depend on it, and the correction makes the argument slightly stronger:
+            the gross tendency is {num(gross.expectancyPipsPerTrade, 2)} pips per trade against a spread
+            cost of {num(spreadPerTrade, 2)} — a factor of{" "}
+            {costToEdge === null ? "—" : num(costToEdge, 1)}, not the 2 that the old figure implied.
+          </p>
+        </div>
       </Section>
 
       {/* ── the mechanism ───────────────────────────────────────────────── */}
       <Section id="mechanism" title="Why it loses: the cost of acting is about twice the edge">
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Gross edge</p>
+            <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+              Gross tendency
+            </p>
             <p className="mt-1 text-2xl font-semibold text-emerald-700">
               {pips(gross.expectancyPipsPerTrade, 2)}
             </p>
-            <p className="mt-1 text-xs text-slate-600">per trade, at mid, before any spread</p>
+            <p className="mt-1 text-xs text-slate-600">
+              per trade, at mid, before any spread — from the zero-cost row, which a second
+              implementation has not reproduced
+            </p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Spread paid</p>
+            <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Spread cost</p>
             <p className="mt-1 text-2xl font-semibold text-rose-700">{pips(spreadPerTrade, 2)}</p>
             <p className="mt-1 text-xs text-slate-600">
-              per trade — the gap between the zero-cost and achievable expectancy
+              per trade — {pips(spreadTotal, 1)} over {group(String(net.trades))} trades, the zero-cost
+              total minus the achievable total
             </p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -407,10 +467,56 @@ function BacktestPage() {
           per trade. But acting on it costs {pips(spreadPerTrade, 2)} per trade in spread, so the cost is{" "}
           {costToEdge === null ? "—" : `${num(costToEdge, 1)}×`} the edge. Every trade starts the wrong side
           of that gap, and the strategy has to be right by more than the gap just to break even. It is not
-          right by that much. Mean round-trip spread across the four pairs is {pips(meanRoundTrip, 2)}.
+          right by that much.
         </p>
+        <p className="mt-3 text-xs text-slate-600">
+          <strong className="font-semibold">One spread-cost figure, and what it is.</strong>{" "}
+          {spreadCost?.definition ?? "zero-cost total minus achievable total, per trade"}. It is a single
+          subtraction of two totals printed on this page, so it can be re-checked without re-running
+          anything. Of the {num(spreadPerTrade, 2)} pips per trade,{" "}
+          {num(spreadCost?.crossingCost.perTradePips ?? 0, 2)} is crossed at the moment of the fills and the
+          rest is the change in <em>when</em> a bid-tested stop or target is first touched once the spread is
+          removed from the price series.
+        </p>
+        {spreadCost?.supersedes?.length ? (
+          <details className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+              Three different spread-cost figures used to be in this record. Here is what each was, and why
+              it was wrong.
+            </summary>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full border-collapse text-xs">
+                <thead>
+                  <tr className="bg-white">
+                    <Th>Old figure</Th>
+                    <Th>What it was</Th>
+                    <Th>Why it was wrong</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spreadCost.supersedes.map((s) => (
+                    <tr key={s.figure}>
+                      <Td mono>{s.figure}</Td>
+                      <Td>{s.what}</Td>
+                      <Td>{s.why}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs text-slate-700">
+              The figure that replaces all three is{" "}
+              <strong className="font-semibold">
+                {num(spreadTotal, 1)} pips over {group(String(net.trades))} trades ={" "}
+                {num(spreadPerTrade, 3)} pips per trade
+              </strong>
+              , stored in the results file as <span className="font-mono">spreadCost</span> alongside the
+              per-trade <span className="font-mono">spreadCrossingCostPips</span> field that decomposes it.
+            </p>
+          </details>
+        ) : null}
 
-        <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-900">Spread actually paid, per pair</h3>
+        <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-900">Spread cost, per pair</h3>
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full border-collapse text-sm">
             <thead>
@@ -418,7 +524,8 @@ function BacktestPage() {
                 <Th>Pair</Th>
                 <Th right>Mean spread at entry fill</Th>
                 <Th right>Median spread at entry fill</Th>
-                <Th right>Mean round-trip cost</Th>
+                <Th right>Spread cost per trade</Th>
+                <Th right>of which crossed at the fills</Th>
                 <Th right>Mean spread, all bars</Th>
               </tr>
             </thead>
@@ -432,6 +539,7 @@ function BacktestPage() {
                     <Td right>{pips(s.meanSpreadAtEntryFillPips, 2)}</Td>
                     <Td right>{pips(s.medianSpreadAtEntryFillPips, 2)}</Td>
                     <Td right>{pips(s.meanRoundTripSpreadCostPips, 2)}</Td>
+                    <Td right>{pips(s.meanSpreadCrossingCostPips ?? 0, 2)}</Td>
                     <Td right>{pips(s.allBarsMeanSpreadPips, 2)}</Td>
                   </tr>
                 );
@@ -441,8 +549,11 @@ function BacktestPage() {
         </div>
         <p className="mt-3 text-xs text-slate-600">
           These are the owner&rsquo;s own broker quotes, not a published retail table — the spread on each
-          fill is the spread the feed carried at that moment. Spreads are wider on GBP/USD than on the
-          others, and GBP/USD is also the pair that loses most (see below).
+          fill is the spread the feed carried at that moment. &ldquo;Spread cost per trade&rdquo; is the
+          zero-cost total minus the achievable total for that pair, divided by its trades; the four
+          per-pair figures do not average to the combined one unless they are weighted by trade count,
+          which is why the page quotes the pooled figure and not their mean. Spreads are wider on GBP/USD
+          than on the others, and GBP/USD is also the pair that loses most (see below).
         </p>
       </Section>
 
@@ -662,6 +773,73 @@ function BacktestPage() {
         </p>
       </Section>
 
+      {/* ── data window ─────────────────────────────────────────────────── */}
+      <Section id="data-window" title="The data window: what is actually hourly, and what is not">
+        {resolution ? (
+          <>
+            <p className="mb-3">
+              The broker&rsquo;s H1 history does not begin hourly. Measured from the gap between
+              consecutive bars — not assumed — {resolution.hourlyFromUtc ? `it is a daily series until ${day(resolution.hourlyFromUtc)}` : "its resolution varies"}:
+              for 2003 and 2004, essentially none of the gaps between consecutive bars in the
+              &ldquo;hourly&rdquo; file is an hour or less. That means the first ~2.6 years of the file
+              cannot support an hourly backtest, and the indicators feeding the first genuine hourly
+              trades are partly seeded from daily bars.
+            </p>
+            <p className="mb-3">
+              <strong className="font-semibold">
+                {group(String(resolution.tradesFilledBeforeHourlyFrom))} of the{" "}
+                {group(String(net.trades))} trades were filled on daily bars
+              </strong>{" "}
+              ({num(resolution.tradesFilledBeforeHourlyFromPips)} pips
+              {Object.entries(resolution.byYearOfFills).length
+                ? ` — ${Object.entries(resolution.byYearOfFills)
+                    .map(([y, v]) => `${y}: ${v.trades} trades, ${num(v.totalPips)} pips`)
+                    .join("; ")}`
+                : ""}
+              ). They are labelled here rather than removed: they are part of the total the headline
+              quotes, and the year-by-year table shows them as the two thin years with ~10 trades
+              against ~170 in every later year.
+            </p>
+            <p className="mb-3 text-xs text-slate-600">{resolution.preludeNote}</p>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-slate-50">
+                    <Th>Pair</Th>
+                    <Th>Hourly from</Th>
+                    <Th right>Bars before that</Th>
+                    <Th right>2002 gaps ≤ 1h</Th>
+                    <Th right>2003 gaps ≤ 1h</Th>
+                    <Th right>2004 gaps ≤ 1h</Th>
+                    <Th right>2005 gaps ≤ 1h</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {resolution.perPair.map((row) => {
+                    const yr = (y: string) => row.perYear[y] ?? { gaps: 0, gapsWithinHour: 0, bars: 0 };
+                    const cell = (y: string) => `${yr(y).gapsWithinHour} of ${yr(y).gaps}`;
+                    return (
+                      <tr key={row.label}>
+                        <Td>{row.label}</Td>
+                        <Td mono>{row.hourlyFromUtc ? day(row.hourlyFromUtc) : "—"}</Td>
+                        <Td right>{group(String(row.barsBeforeHourlyFrom))}</Td>
+                        <Td right>{cell("2002")}</Td>
+                        <Td right>{cell("2003")}</Td>
+                        <Td right>{cell("2004")}</Td>
+                        <Td right>{cell("2005")}</Td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs text-slate-600">{resolution.rule}</p>
+          </>
+        ) : (
+          <p>The run did not record how much of its history is hourly, so this page does not state it.</p>
+        )}
+      </Section>
+
       {/* ── provenance ──────────────────────────────────────────────────── */}
       <Section id="provenance" title="Where this measurement comes from">
         <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -699,14 +877,21 @@ function BacktestPage() {
             <strong className="font-semibold">Measurement period:</strong>{" "}
             {stamp(p.measurementPeriod.headlineStartUtc)} → {stamp(p.measurementPeriod.headlineEndUtc)}.{" "}
             {p.measurementPeriod.note}
+            {p.measurementPeriod.firstTradeUtc
+              ? ` The first trade does not fire until ${stamp(p.measurementPeriod.firstTradeUtc)}, which is the figure the headline is really measured over.`
+              : ""}
           </li>
           <li>
             <strong className="font-semibold">Held-out period starts:</strong>{" "}
             {stamp(p.measurementPeriod.heldOutLast12MonthsFromUtc)}.
           </li>
           <li>
-            <strong className="font-semibold">Data:</strong> hourly bars from the owner&rsquo;s own OANDA
-            account, with the bid and ask recorded on every bar. Broker&rsquo;s oldest served bar:{" "}
+            <strong className="font-semibold">Data:</strong> the broker&rsquo;s H1 bars from the
+            owner&rsquo;s own OANDA account, with the bid and ask recorded on every bar —{" "}
+            {resolution?.hourlyFromUtc
+              ? `a daily series before ${day(resolution.hourlyFromUtc)} and hourly after it`
+              : "hourly bars"}
+            . Broker&rsquo;s oldest served bar:{" "}
             {stamp(p.dataWindow[dataKeys[0]]?.brokerOldestServedUtc ?? "")}.
           </li>
           <li>
@@ -735,11 +920,20 @@ function BacktestPage() {
       </Section>
 
       {/* ── reconciliation ──────────────────────────────────────────────── */}
-      <Section id="reconciliation" title="The backtest reproduces the dashboard's own signals">
+      <Section id="reconciliation" title="Whether the backtest still reproduces the dashboard's signals">
         <p className="mb-3">
-          A backtest that does not reproduce what the instrument says is measuring something else. Run over
-          the same history, the engine reaches the same four signals the dashboard currently shows — same
-          pair, same direction, same entry, same trigger bar:
+          A backtest that does not reproduce what the instrument says is measuring something else. This
+          comparison is made at run time, between the engine replayed over the frozen cache and whatever
+          the dashboard was serving when this run happened — and it only means anything while those two
+          windows coincide. When this run was made, they did not: the cache ends{" "}
+          {day(p.measurementPeriod.headlineEndUtc)} and the dashboard was reading bars from later than
+          that. The table records that rather than hiding it.
+        </p>
+        <p className="mb-3">
+          At the original run (2026-10-12) the two windows did coincide and{" "}
+          <strong className="font-semibold">all four signals agreed</strong> — same pair, same direction,
+          same entry, same trigger bar. That check is a dated fact about that day, not a standing property
+          of the page.
         </p>
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full border-collapse text-sm">
@@ -751,6 +945,7 @@ function BacktestPage() {
                 <Th>Backtest trigger bar</Th>
                 <Th>Dashboard side</Th>
                 <Th right>Dashboard entry</Th>
+                <Th>Windows coincide</Th>
                 <Th>Agrees</Th>
               </tr>
             </thead>
@@ -766,8 +961,19 @@ function BacktestPage() {
                     <Td mono>{stamp(r.backtestLastTriggerBarUtc)}</Td>
                     <Td className="uppercase">{r.liveSignal}</Td>
                     <Td right mono>{String(r.liveEntry)}</Td>
-                    <Td className={r.agrees ? "text-emerald-700" : "text-rose-700"}>
-                      {r.agrees ? "yes" : "NO"}
+                    <Td className={r.windowsCoincide ? "text-slate-700" : "text-amber-700"}>
+                      {r.windowsCoincide ? "yes" : "no"}
+                    </Td>
+                    <Td
+                      className={
+                        r.windowsCoincide
+                          ? r.agrees
+                            ? "text-emerald-700"
+                            : "text-rose-700"
+                          : "text-slate-500"
+                      }
+                    >
+                      {r.windowsCoincide ? (r.agrees ? "yes" : "NO") : "not comparable"}
                     </Td>
                   </tr>
                 );
@@ -779,13 +985,14 @@ function BacktestPage() {
           {reconPairs.map((k) => {
             const r = p.reconciliationWithLive[k];
             if (!r) return null;
-            const total = r.backtestTriggerClose;
             return (
               <li key={k}>
                 <span className="font-mono">{k}</span> — backtest {r.backtestSide.toUpperCase()} at{" "}
-                <span className="font-mono">{String(total)}</span> on bar{" "}
+                <span className="font-mono">{String(r.backtestTriggerClose)}</span> on bar{" "}
                 <span className="font-mono">{stamp(r.backtestLastTriggerBarUtc)}</span>; dashboard{" "}
-                {r.liveSignal} at <span className="font-mono">{String(r.liveEntry)}</span>.
+                {r.liveSignal} at <span className="font-mono">{String(r.liveEntry)}</span> on bar{" "}
+                <span className="font-mono">{stamp(r.liveTriggerBarUtc)}</span>, reading bars to{" "}
+                <span className="font-mono">{stamp(r.liveLatestBarUtc ?? "")}</span>.
                 {r.triggerIsOnFinalCachedBarNote ? ` ${r.triggerIsOnFinalCachedBarNote}.` : ""}
               </li>
             );
@@ -810,18 +1017,44 @@ function BacktestPage() {
           Every figure above is read from the run&rsquo;s results file, which is kept and can be
           re-checked against this page. Where a number is negative, it is shown negative.
         </p>
-        <p className="mt-3 text-sm text-slate-700">
-          <strong className="font-semibold">
-            Our own measurement, not an independent verification.
-          </strong>{" "}
-          Every figure here has been checked for internal consistency: it matches the stored results
-          file, and the live engine reproduces the dashboard&rsquo;s current signals from the same
-          rule and indicator code. That is self-consistency, and it is not the same thing as
-          independent confirmation. A second, independently written replay of this ruleset over the
-          same stored data &mdash; compared trade by trade &mdash; is a planned item that has{" "}
-          <em>not</em> been done. Until it is, treat these numbers as this project&rsquo;s own
-          measurement, reported honestly, and not as verified by anyone else.
-        </p>
+
+        <div className="mt-4 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4">
+          <h3 className="text-sm font-semibold tracking-wide text-emerald-900 uppercase">
+            What is independently verified, and what is not
+          </h3>
+          <p className="mt-2 text-sm text-emerald-900">
+            <strong className="font-semibold">
+              The headline result on this page has been independently reproduced, trade for trade.
+            </strong>{" "}
+            A second implementation, written from the written specification by someone who had not read
+            this project&rsquo;s replay code, produced{" "}
+            <strong className="font-semibold">3,789 of 3,789 trades</strong> with identical trigger bar,
+            side, entry price, exit price, exit reason, pips, R, risk and holding time, and every published
+            headline aggregate reproduces: {num(net.totalPips)} pips, {num(net.winRatePct, 1)}% win rate,
+            profit factor {num(net.profitFactor, 2)}, {num(net.totalR, 2)}R, maximum drawdown{" "}
+            {pips(net.maxDrawdownPips)}, longest losing streak {net.longestLosingStreak}, per pair, per year
+            and the held-out twelve months. The one trade it did not match is the still-open USD/JPY one,
+            which both sides exclude. The audit ran on{" "}
+            {verification ? day(verification.auditedAt) : "2026-11-02"}.
+          </p>
+          <p className="mt-2 text-sm text-emerald-900">
+            <strong className="font-semibold">That verification covers the headline figures only.</strong>{" "}
+            It does <em>not</em> cover the zero-cost row, which is{" "}
+            <strong className="font-semibold">not reproduced</strong> and is labelled as such next to the
+            number — the audit found the defect in our zero-cost code path, this page describes it, and the
+            corrected figure has not itself been re-audited. It does not cover the trigger-close row, which
+            the audit reproduced only once its convention was identified and has not been re-checked. And
+            it does not cover the daily-bar measurement at all, which remains unaudited.
+          </p>
+          <p className="mt-2 text-sm text-emerald-900">
+            The audit is independent in the sense that matters and no more: a separately written replay
+            compared against this one. The auditor had already read the headline figures before starting,
+            so it is a check on arithmetic, data handling and the rule as documented — not a blind check
+            that could catch a convention both implementations share because both read the same prose. The
+            audit&rsquo;s findings, including the one that this page was wrong, are kept alongside the
+            results rather than summarised away.
+          </p>
+        </div>
       </section>
 
       <footer className="mt-8 text-xs text-slate-500">

@@ -45,6 +45,8 @@ export type VariantStats = {
 
 export type Variant = {
   label?: string;
+  /** The fill convention this variant uses, stated by the run itself. */
+  convention?: string;
   fullPeriod: { perPair: Record<string, VariantStats>; combined: VariantStats };
   last12MonthsHeldOut: { perPair: Record<string, VariantStats>; combined: VariantStats };
 };
@@ -64,7 +66,53 @@ export type SpreadRow = {
   allBarsMedianSpreadPips: number;
   meanSpreadAtEntryFillPips: number;
   medianSpreadAtEntryFillPips: number;
+  /** Zero-cost total minus achievable total, per trade: THE per-trade spread cost. */
   meanRoundTripSpreadCostPips: number;
+  /** The crossing cost on the fills alone — a decomposition of the line above. */
+  meanSpreadCrossingCostPips?: number;
+};
+
+/**
+ * The one per-trade spread-cost figure, and the reconciliation of the three numbers
+ * that used to stand in for it. Written by the backtest run, not computed here.
+ */
+export type SpreadCostBlock = {
+  headlineTotalPips: number;
+  zeroCostTotalPips: number;
+  trades: number;
+  totalPips: number;
+  perTradePips: number;
+  definition: string;
+  crossingCost: { totalPips: number; perTradePips: number; note: string };
+  supersedes: { figure: string; what: string; why: string }[];
+};
+
+/** Which figures a second, independently written implementation has reproduced. */
+export type VerificationBlock = {
+  auditedAt: string;
+  auditor: string;
+  artifact: string;
+  headline: { independentlyReproduced: boolean; note: string };
+  zeroCost: { independentlyReproduced: boolean; note: string };
+  optimistic: { independentlyReproduced: boolean; note: string };
+};
+
+/** How much of the "hourly" file is actually hourly, measured from the bar gaps. */
+export type DataResolutionBlock = {
+  hourlyFromUtc: string | null;
+  measuredFrom: string;
+  rule: string;
+  preludeNote: string;
+  tradesFilledBeforeHourlyFrom: number;
+  tradesFilledBeforeHourlyFromPips: number;
+  byYearOfFills: Record<string, { trades: number; totalPips: number }>;
+  perPair: {
+    label: string;
+    bars: number;
+    hourlyFromUtc: string | null;
+    barsBeforeHourlyFrom: number;
+    perYear: Record<string, { gaps: number; gapsWithinHour: number; bars: number }>;
+  }[];
 };
 
 export type ReconciliationRow = {
@@ -72,8 +120,11 @@ export type ReconciliationRow = {
   backtestSide: string;
   backtestTriggerClose: number;
   liveSignal: string;
-  liveEntry: number;
+  liveEntry: number | null;
   liveTriggerBarUtc: string;
+  liveLatestBarUtc?: string | null;
+  backtestCacheEndsUtc?: string;
+  windowsCoincide?: boolean;
   triggerIsOnFinalCachedBar: boolean;
   triggerIsOnFinalCachedBarNote: string | null;
   agrees: boolean;
@@ -100,8 +151,14 @@ export type BacktestPayload = {
     headlineStartUtc: string;
     headlineEndUtc: string;
     heldOutLast12MonthsFromUtc: string;
+    firstEvaluatedIndex?: number;
+    firstTradeUtc?: string | null;
     note: string;
   };
+  verification?: VerificationBlock;
+  dataResolution?: DataResolutionBlock;
+  spreadCost?: SpreadCostBlock;
+  reconciliationWithLiveNote?: string;
   assumptions: Record<string, string | boolean>;
   exclusions: string[];
   reconciliationWithLive: Record<string, ReconciliationRow>;
