@@ -14,12 +14,17 @@
  * fill: the fills already happened.
  */
 
+import { isolate } from "./isolate.ts";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { sizePosition, farSideEntryPrice, type SizingResult } from "../lib/instruction.ts";
 import { computeRealisedRisk, riskAtPrice, RISK_EPSILON } from "../lib/risk.ts";
 import { legacyMidBasedSizing } from "./legacyMidSizing.ts";
 import { RECORDED_FILLS, capFor, realisedFor, type RecordedFill } from "./fixtures.ts";
+
+// This file's own temporary execution directory, so it cannot touch the live
+// record even when the whole tests/ directory runs in one process.
+isolate();
 
 /**
  * Which sizing is under test. The assertions below are identical either way; only the

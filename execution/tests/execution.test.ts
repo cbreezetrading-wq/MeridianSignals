@@ -1,22 +1,21 @@
-import { test, after } from "node:test";
+import { isolate } from "./isolate.ts";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createClient } from "../lib/client.ts";
+import { parseConfig, resolveSettings } from "../lib/config.ts";
+import { evaluate, submitSignal, payloadHash, readPause } from "../lib/engine.ts";
+import { readRecords, verifyChain } from "../lib/record.ts";
+import { withSubmissionLock } from "../lib/submissionLock.ts";
+import { assertPracticeTarget } from "../lib/interlock.ts";
+import { instructionsFromSignals } from "../lib/signalAdapter.ts";
+import { validateInstruction } from "../lib/instruction.ts";
 
-const dir = await mkdtemp(join(tmpdir(), "meridian-test-"));
-process.env.MERIDIAN_EXECUTION_DIR = dir;
-process.env.OANDA = "FAKE-TEST-TOKEN-NEVER-REAL";
-process.env.OANDA_ACCOUNT_ID = "test-account";
-const { createClient } = await import("../lib/client.ts");
-const { parseConfig, resolveSettings } = await import("../lib/config.ts");
-const { evaluate, submitSignal, payloadHash, readPause } = await import("../lib/engine.ts");
-const { readRecords, verifyChain } = await import("../lib/record.ts");
-const { withSubmissionLock } = await import("../lib/submissionLock.ts");
-const { assertPracticeTarget } = await import("../lib/interlock.ts");
-const { instructionsFromSignals } = await import("../lib/signalAdapter.ts");
-const { validateInstruction } = await import("../lib/instruction.ts");
-after(() => rm(dir, { recursive: true, force: true }));
+// This file's own temporary execution directory. lib/paths.ts resolves every path
+// at call time, so setting it here — before any test resolves one — keeps the
+// whole file off the live record. Removed when the process exits.
+const dir = isolate();
 
 const config = parseConfig({ mode: "approve-before-execution", useTestProfile: true,
   ownerSettings: { allowedTradingTimes: { days: ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"], fromUtc: "00:00", toUtc: "23:59" } },

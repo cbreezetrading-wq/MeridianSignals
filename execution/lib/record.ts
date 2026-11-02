@@ -18,8 +18,8 @@ import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { redactDeep } from "./client.ts";
 
-import { executionPath } from "./paths.ts";
-export const RECORD_PATH = executionPath("orders.jsonl");
+import { recordPath } from "./paths.ts";
+export { recordPath };
 
 export const GENESIS_PREV_HASH = "0".repeat(64);
 
@@ -84,7 +84,7 @@ export async function hashRecord(fieldsWithPrevHash: Record<string, unknown>): P
   return sha256Hex(canonical(fieldsWithPrevHash));
 }
 
-export async function readRecords(path = RECORD_PATH): Promise<ExecutionRecord[]> {
+export async function readRecords(path = recordPath()): Promise<ExecutionRecord[]> {
   try {
     await stat(path);
   } catch (error) {
@@ -114,7 +114,7 @@ export type VerifyResult = {
   lastHash: string;
 };
 
-export async function verifyChain(path = RECORD_PATH): Promise<VerifyResult> {
+export async function verifyChain(path = recordPath()): Promise<VerifyResult> {
   const records = await readRecords(path);
   let expectedPrev = GENESIS_PREV_HASH;
   let firstBreak: VerifyResult["firstBreak"] = null;
@@ -168,7 +168,7 @@ export type AppendInput = {
  * Append one record. Serialised through a promise chain so two concurrent appends
  * in this process cannot read the same "last hash" and fork the chain.
  */
-export async function appendRecord(input: AppendInput, path = RECORD_PATH): Promise<ExecutionRecord> {
+export async function appendRecord(input: AppendInput, path = recordPath()): Promise<ExecutionRecord> {
   const run = async (): Promise<ExecutionRecord> => {
     await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
     const existing = await readRecords(path);
@@ -203,7 +203,7 @@ export async function appendRecord(input: AppendInput, path = RECORD_PATH): Prom
 }
 
 /** Replay: the latest record per signal id, plus the full event list. */
-export async function replay(path = RECORD_PATH): Promise<{
+export async function replay(path = recordPath()): Promise<{
   bySignal: Map<string, ExecutionRecord[]>;
   byOrderKey: Map<string, ExecutionRecord[]>;
   all: ExecutionRecord[];
