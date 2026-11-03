@@ -144,11 +144,22 @@ export type ExecutionConfig = {
   useDemoTestProfile: boolean;
   automaticAcknowledged: boolean;
   acknowledgedBy: string | null;
+  /**
+   * Submission attempts allowed per approved payload, from config `submissionPolicy.maxAttempts`.
+   * Defaults to 1. The order path makes exactly one POST and never retries an uncertain
+   * outcome (timeout, lost connection): the signal stays blocked until the broker's own state
+   * has been read. A configured value above 1 cannot raise that: the effective maximum stays 1
+   * and the difference is reported in status rather than silently ignored.
+   */
+  submissionMaxAttempts: number;
   ownerSettings: Partial<Record<RequiredSettingKey, unknown>>;
   strategies: StrategyConfig[];
   /** Anything the config file got wrong, kept verbatim for the record. */
   problems: string[];
 };
+
+/** The order path submits once. There is no retry loop, so this is the hard ceiling. */
+export const MAX_SUBMISSION_ATTEMPTS = 1;
 
 import { configPath } from "./paths.ts";
 export { configPath };
@@ -193,6 +204,7 @@ export function defaultConfig(): ExecutionConfig {
     useDemoTestProfile: false,
     automaticAcknowledged: false,
     acknowledgedBy: null,
+    submissionMaxAttempts: MAX_SUBMISSION_ATTEMPTS,
     ownerSettings: {},
     strategies: defaultStrategies(),
     problems: [],
@@ -248,6 +260,22 @@ export function parseConfig(raw: unknown): ExecutionConfig {
     base.useDemoTestProfile = false;
   }
 
+  // Submission attempts. An uncertain submission (timeout, lost connection) is never retried
+  // by this build: it is recorded and stays blocked until the broker's own state is read.
+  // config.json states the maximum as 1; anything else is reported, and the effective maximum
+  // cannot exceed the single POST the order path performs.
+  const policy = obj.submissionPolicy;
+  if (policy !== undefined) {
+    const maxAttempts = (policy as Record<string, unknown> | null)?.maxAttempts;
+    if (typeof maxAttempts !== "number" || !Number.isInteger(maxAttempts) || maxAttempts < 1) {
+      base.problems.push(
+        `submissionPolicy.maxAttempts must be a positive integer (got ${JSON.stringify(maxAttempts)}); using ${MAX_SUBMISSION_ATTEMPTS}`,
+      );
+    } else {
+      base.submissionMaxAttempts = maxAttempts;
+    }
+  }
+
   if (obj.ownerSettings && typeof obj.ownerSettings === "object") {
     const supplied = obj.ownerSettings as Record<string, unknown>;
     for (const key of Object.keys(supplied)) {
@@ -296,6 +324,11 @@ export type ResolvedSettings = {
   demoTestProfileInUse: boolean;
   /** Which label governs the values: OWNER, DEMO-TEST, TEST, or NONE when all are UNSET. */
   profileLabel: SettingSource | "MIXED" | "NONE";
+  /**
+   * How many submission attempts are allowed. `effective` is what the order path can do —
+   * one POST per approved payload — and is capped by MAX_SUBMISSION_ATTEMPTS.
+   */
+  submission: { configuredMaxAttempts: number; effectiveMaxAttempts: number; note: string };
   problems: string[];
 };
 
@@ -344,6 +377,13 @@ export function resolveSettings(config: ExecutionConfig): ResolvedSettings {
     testProfileInUse: config.useTestProfile,
     demoTestProfileInUse: config.useDemoTestProfile,
     profileLabel: profileLabelOf(values),
+    submission: {
+      configuredMaxAttempts: config.submissionMaxAttempts,
+      effectiveMaxAttempts: Math.min(config.submissionMaxAttempts, MAX_SUBMISSION_ATTEMPTS),
+      note:
+        "One submission attempt per approved payload. An uncertain outcome (timeout, lost connection) is never retried: " +
+        "it is recorded and the signal stays blocked until the broker's own state has been read.",
+    },
     problems,
   };
 }
