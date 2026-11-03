@@ -11,12 +11,17 @@
  *    cannot be written even by accident, and a post-write assertion re-reads the
  *    line and throws if the token appears in it;
  *  - the file is opened with O_APPEND and each line is written in a single call, so
- *    concurrent writers cannot interleave within a line.
+ *    concurrent writers cannot interleave within a line;
+ *  - the whole read-compute-append runs under an exclusive cross-process flock
+ *    (lib/ledgerLock.ts). Per-line atomicity is not enough: two PROCESSES can each read
+ *    the same last hash and both write the same seq, which is exactly what happened on
+ *    2026-11-03 (INCIDENT-2026-11-03-chain-break.md).
  */
 
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { redactDeep } from "./client.ts";
+import { withLedgerLock } from "./ledgerLock.ts";
 
 import { recordPath } from "./paths.ts";
 export { recordPath };
@@ -165,37 +170,43 @@ export type AppendInput = {
 };
 
 /**
- * Append one record. Serialised through a promise chain so two concurrent appends
- * in this process cannot read the same "last hash" and fork the chain.
+ * Append one record. Two layers of serialisation, both needed:
+ *  - the promise chain serialises appends INSIDE this process;
+ *  - `withLedgerLock` holds an exclusive flock across processes, so a second writer
+ *    (an orphaned watcher, a script, the console) cannot read the same last hash and
+ *    fork the chain. The lock covers the read of the last record, the seq/prevHash
+ *    derivation, the hash and the append — everything that must not interleave.
  */
 export async function appendRecord(input: AppendInput, path = recordPath()): Promise<ExecutionRecord> {
   const run = async (): Promise<ExecutionRecord> => {
     await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-    const existing = await readRecords(path);
-    const last = existing[existing.length - 1];
-    const seq = (last?.seq ?? 0) + 1;
-    const prevHash = last?.hash ?? GENESIS_PREV_HASH;
-    const fields = {
-      seq,
-      recordedAt: new Date().toISOString(),
-      kind: input.kind,
-      signalId: input.signalId ?? null,
-      strategyId: input.strategyId ?? null,
-      strategyVersion: input.strategyVersion ?? null,
-      orderKey: input.orderKey ?? null,
-      state: input.state ?? null,
-      payload: redactDeep(input.payload),
-      prevHash,
-    };
-    const hash = await hashRecord(fields as unknown as Record<string, unknown>);
-    const record: ExecutionRecord = { ...(fields as any), hash };
-    const line = JSON.stringify(record) + "\n";
-    const secret = process.env.OANDA ?? "";
-    if (secret.length >= 8 && line.includes(secret)) {
-      throw new Error("REFUSED to append: the credential appears in the serialised record.");
-    }
-    await appendFile(path, line, { encoding: "utf8", flag: "a" });
-    return record;
+    return withLedgerLock(`${path}.lock`, async () => {
+      const existing = await readRecords(path);
+      const last = existing[existing.length - 1];
+      const seq = (last?.seq ?? 0) + 1;
+      const prevHash = last?.hash ?? GENESIS_PREV_HASH;
+      const fields = {
+        seq,
+        recordedAt: new Date().toISOString(),
+        kind: input.kind,
+        signalId: input.signalId ?? null,
+        strategyId: input.strategyId ?? null,
+        strategyVersion: input.strategyVersion ?? null,
+        orderKey: input.orderKey ?? null,
+        state: input.state ?? null,
+        payload: redactDeep(input.payload),
+        prevHash,
+      };
+      const hash = await hashRecord(fields as unknown as Record<string, unknown>);
+      const record: ExecutionRecord = { ...(fields as any), hash };
+      const line = JSON.stringify(record) + "\n";
+      const secret = process.env.OANDA ?? "";
+      if (secret.length >= 8 && line.includes(secret)) {
+        throw new Error("REFUSED to append: the credential appears in the serialised record.");
+      }
+      await appendFile(path, line, { encoding: "utf8", flag: "a" });
+      return record;
+    });
   };
   const chained = writeLock.then(run, run);
   writeLock = chained.catch(() => undefined);
