@@ -18,17 +18,29 @@
 # gated inside engine.ts on an explicit approval (approve-before-execution) or automatic mode,
 # and config.json is approve-before-execution with automatic unreachable.
 #
-# Usage:  install-supervisor.sh          install hook + start if not running (re-runnable)
-#         install-supervisor.sh --boot   same, quieter, as called from /entrypoint.sh
+# Usage:  install-supervisor.sh                    install hook + start if not running (re-runnable)
+#         install-supervisor.sh --boot             same, quieter, as called from /entrypoint.sh
+#         install-supervisor.sh --boot --no-entrypoint
+#                                                  same, but never touch /entrypoint.sh — used by the
+#                                                  site's own start path (site/dev-server.sh), because the
+#                                                  entrypoint hook is image-level and does not survive a
+#                                                  machine restart, so that path must not depend on it.
 set -u
 
 EXEC_DIR=/home/team/shared/execution
 WATCHER="$EXEC_DIR/run-watcher.sh"
 PIDFILE="$EXEC_DIR/.run/supervisor.pid"
 OUTLOG="$EXEC_DIR/.run/supervisor.log"
+LOCKFILE="$EXEC_DIR/.run/install.lock"
 ENTRYPOINT=/entrypoint.sh
 BOOT=0
-[ "${1:-}" = "--boot" ] && BOOT=1
+NO_ENTRY=0
+for arg in "$@"; do
+  case "$arg" in
+    --boot) BOOT=1 ;;
+    --no-entrypoint) NO_ENTRY=1 ;;
+  esac
+done
 
 say() { echo "[install-supervisor] $(date -u +%FT%TZ) $*"; }
 
@@ -40,7 +52,9 @@ chmod +x "$WATCHER"
 mkdir -p "$EXEC_DIR/.run"
 
 # ---------------------------------------------------------------- 1. boot hook (idempotent)
-if [ -w "$ENTRYPOINT" ]; then
+if [ "$NO_ENTRY" = "1" ]; then
+  [ "$BOOT" = "1" ] || say "called with --no-entrypoint; /entrypoint.sh left untouched"
+elif [ -w "$ENTRYPOINT" ]; then
   python3 - "$ENTRYPOINT" <<'PY'
 import sys
 
@@ -93,6 +107,15 @@ else
 fi
 
 # ---------------------------------------------------------------- 2. already running?
+# One installer at a time: two starts landing together (the managed dev-server wrapper
+# restarts `bun run dev`, and the entrypoint hook can fire in the same window) must not both
+# pass the "not running yet" checks below and start a supervisor each. The lock is advisory
+# and short-lived; the fd is closed for the detached child so the watcher does not inherit it.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCKFILE" || true
+  flock -w 20 9 || say "could not take $LOCKFILE within 20s; checking for a running supervisor anyway"
+fi
+
 if [ -f "$PIDFILE" ]; then
   pid="$(cat "$PIDFILE" 2>/dev/null || true)"
   if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
@@ -107,7 +130,8 @@ if pgrep -f "run-watcher[.]sh" >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------- 3. start it, detached
-setsid nohup "$WATCHER" >> "$OUTLOG" 2>&1 &
+# 9>&- : the detached child must not inherit the installer's lock fd.
+setsid nohup "$WATCHER" >> "$OUTLOG" 2>&1 9>&- &
 pid=$!
 echo "$pid" > "$PIDFILE"
 sleep 1
