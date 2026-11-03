@@ -379,6 +379,11 @@ export type StatusSnapshot = {
   mode: { current: string; source: string; automaticReachable: boolean };
   testProfile: boolean;
   /**
+   * Submission attempts: what config.json asks for and what the order path can actually do.
+   * One POST per approved payload, no retry of an uncertain outcome.
+   */
+  submission: { configuredMaxAttempts: number; effectiveMaxAttempts: number; note: string };
+  /**
    * Which label governs the risk settings. "DEMO-TEST" means the values are the ones the
    * owner directed for a Practice demo run — shown with that label wherever they appear,
    * never as the owner's own risk appetite.
@@ -568,6 +573,7 @@ export async function buildStatus(client: Client, config: ExecutionConfigLike): 
     interlock: { practiceHost: PRACTICE_HOST, configurable: false },
     mode: { current: config.mode, source: config.modeSource, automaticReachable: config.mode === "automatic" },
     testProfile: config.useTestProfile,
+    submission: resolved.submission,
     settingsProfile: {
       label: resolved.profileLabel === "DEMO-TEST" ? DEMO_TEST_LABEL : resolved.profileLabel,
       demoTestProfileInUse: resolved.demoTestProfileInUse,
