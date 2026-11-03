@@ -1,5 +1,10 @@
 # Meridian Signals
 
+Live setup preparation is isolated in [execution/live/README.md](execution/live/README.md).
+It provides live-account reads and sizing previews only. There is no live submission
+path, and Practice credentials/settings are never inherited.
+
+
 ## Current integration update
 
 The Practice execution console and backend watcher are now implemented in source.
