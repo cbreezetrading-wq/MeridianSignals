@@ -10,7 +10,12 @@
 #     The hook calls this script with --boot, which starts the supervisor only if it is not
 #     already running. Re-running this script replaces the marked block in place, so the
 #     hook can never be installed twice.
-#  3. Starts the supervisor now if nothing is running, detached (setsid) so it outlives the
+#  3. Stops any ORPHAN watcher (`bun operator.ts watch` whose parent is not a live
+#     run-watcher.sh) before starting anything. An orphan is a second writer on
+#     orders.jsonl; on 2026-11-03 one forked the hash chain
+#     (INCIDENT-2026-11-03-chain-break.md). A supervised watcher is identified by its
+#     parent process and left alone.
+#  4. Starts the supervisor now if nothing is running, detached (setsid) so it outlives the
 #     terminal or session that started it.
 #
 # Safe to run any number of times: it starts nothing twice, and re-writing the entrypoint
@@ -106,7 +111,46 @@ else
   say "cannot write $ENTRYPOINT; boot hook NOT installed (run as root)"
 fi
 
-# ---------------------------------------------------------------- 2. already running?
+# ---------------------------------------------------------------- 2. orphan watchers
+# A `bun operator.ts watch` whose parent is not a live run-watcher.sh is an ORPHAN: it
+# survived a supervisor that was killed without stopping its child. That is not a
+# cosmetic leftover — it is a second writer appending to orders.jsonl. On 2026-11-03 two
+# writers both wrote seq 1417 and the hash chain has read BROKEN ever since
+# (INCIDENT-2026-11-03-chain-break.md). Orphans are stopped here, before anything starts.
+# The supervised watcher is identified by its parent and left strictly alone.
+stop_orphan_watchers() {
+  local pid ppid args stopped=0
+  for pid in $(pgrep -f "operator[.]ts watch" 2>/dev/null || true); do
+    ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    if [ -n "${ppid:-}" ] && [ "$ppid" != "1" ]; then
+      args="$(ps -o args= -p "$ppid" 2>/dev/null || true)"
+      case "$args" in
+        *run-watcher[.]sh*) continue ;;   # supervised by a live supervisor: not ours to touch
+      esac
+    fi
+    say "orphan watcher pid $pid (parent ${ppid:-none}) has no supervisor; stopping it"
+    kill -TERM "$pid" 2>/dev/null || true
+    local i
+    for i in $(seq 1 50); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      say "orphan pid $pid ignored TERM for 5s; sending SIGKILL"
+      kill -KILL "$pid" 2>/dev/null || true
+      sleep 0.3
+    fi
+    if kill -0 "$pid" 2>/dev/null; then
+      say "FAILED to stop orphan watcher pid $pid — stop it by hand before starting a supervisor"
+      exit 1
+    fi
+    say "orphan watcher pid $pid stopped"
+    stopped=$((stopped + 1))
+  done
+  [ "$stopped" = "0" ] || say "stopped $stopped orphan watcher(s)"
+}
+
+# ---------------------------------------------------------------- 3. already running?
 # One installer at a time: two starts landing together (the managed dev-server wrapper
 # restarts `bun run dev`, and the entrypoint hook can fire in the same window) must not both
 # pass the "not running yet" checks below and start a supervisor each. The lock is advisory
@@ -115,6 +159,10 @@ if command -v flock >/dev/null 2>&1; then
   exec 9>"$LOCKFILE" || true
   flock -w 20 9 || say "could not take $LOCKFILE within 20s; checking for a running supervisor anyway"
 fi
+
+# Inside the installer lock: an orphan is stopped once, and a supervisor that is already
+# running (whose watcher must survive) is never mistaken for one.
+stop_orphan_watchers
 
 if [ -f "$PIDFILE" ]; then
   pid="$(cat "$PIDFILE" 2>/dev/null || true)"
