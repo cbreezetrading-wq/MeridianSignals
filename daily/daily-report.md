@@ -17,14 +17,17 @@ loses **−3,373.4 pips (−14.27R)**, wins 31.7% of trades, profit factor **0.8
 **−16.22 pips per trade (−0.069R)**.
 
 **And the more important half of the answer: it loses before spreads too.** With the spread
-removed entirely and identical timing, the same 208 trades return **−2,055.1 pips
-(−9.88 pips, −0.032R per trade)**. So on daily bars there is not even a faint gross tendency
+removed entirely and identical timing, the same 208 trades return **−2,702.4 pips
+(−12.99 pips, −0.042R per trade)**. *(Corrected 2026-11-02: the zero-cost variant used to
+price its mid legs at the CLOSE of the bar after the trigger instead of that bar's OPEN,
+which re-timed every trade by one bar. The superseded figure was −2,055.1 pips / PF 0.87;
+the correction makes the gross tendency more negative, so the conclusion is unchanged.)* So on daily bars there is not even a faint gross tendency
 for the spread to eat. The H1 result was "a real but too-small edge"; the daily result is
 "no edge measured".
 
 **The hypothesis itself was right about cost, and wrong about what it would buy.** Cost per
 trade as a fraction of the trade's risk fell exactly as the argument predicted — from
-**8.5% of 1R at H1 to 3.7% of 1R at daily** — because the moves the ruleset aims at grew with
+**8.4% of 1R at H1 to 2.7% of 1R at daily** — because the moves the ruleset aims at grew with
 the bar while the spread grew far less. Lower frequency did fix the cost problem. It just
 turned out there was nothing left to fix it for: no gross edge survives at the daily horizon.
 
@@ -138,7 +141,7 @@ avoid, and no per-pair selection is proposed.
 | Variant | Trades | Win % | Total pips | Total R | PF | Exp pips/trade | Exp R/trade |
 |---|---|---|---|---|---|---|---|
 | **Headline** (next open, bid/ask) | 208 | 31.7% | −3,373.4 | −14.27 | 0.82 | −16.22 | −0.069 |
-| **Zero cost** (mid) | 208 | 35.1% | −2,055.1 | −6.69 | 0.87 | −9.88 | −0.032 |
+| **Zero cost** (mid) | 208 | 31.7% | −2,702.4 | −8.81 | 0.85 | −12.99 | −0.042 |
 | **Trigger-close (OPTIMISTIC UPPER BOUND, not achievable)** | 208 | 31.7% | −2,793.8 | −11.22 | 0.85 | −13.43 | −0.054 |
 
 The trigger-close row is labelled exactly as the H1 run labels it: an **optimistic upper bound
@@ -155,7 +158,7 @@ daily bars it does not.
 | Variant | Trades | Win % | Total pips | Total R | PF | Exp pips/trade |
 |---|---|---|---|---|---|---|
 | Headline | **10** | 50.0% | +267.2 | +4.81 | 1.41 | +26.72 |
-| Zero cost | 10 | 50.0% | +52.6 | +2.49 | 1.07 | +5.26 |
+| Zero cost | 10 | 50.0% | +318.2 | +5.31 | 1.51 | +31.82 |
 
 Per pair, headline: EUR/USD 3 trades −63.5 · GBP/USD 3 −33.6 · USD/JPY 2 +111.6 · AUD/USD 2
 +252.6. Median hold in the hold-out: 32 days.
@@ -172,28 +175,31 @@ Computed by subtraction from the stored variant results (§4.2), so the reader c
 
 | | Pips per trade | R per trade | Share of 1R |
 |---|---|---|---|
-| Gross edge (mid fills, same timing) | **−9.88** | −0.032 | −3.2% |
-| Spread paid | **6.34** | 0.037 | 3.7% |
+| Gross edge (mid fills, same timing) | **−12.99** | −0.042 | −4.2% |
+| Spread paid | **3.23** | 0.027 | 2.7% |
 | **Net (headline)** | **−16.22** | −0.069 | −6.9% |
 
 Mean initial risk per trade: 127.3 pips (1R = 1.5×ATR(14), and daily ATR is large).
-Totals: gross −2,055.1 pips · spread paid 1,318.3 pips · net −3,373.4 pips.
+Totals: gross −2,702.4 pips · spread paid 671.0 pips · net −3,373.4 pips.
 
 Cross-check: the mean spread measured on the bars the trades actually filled on is **6.361
-pips**, against a spread-paid figure of 6.34 pips. The two independent routes to the same
-number agree, so the decomposition is not an artefact of the subtraction.
+pips**, against a spread-paid figure of 3.23 pips. These are not the same quantity and are not
+expected to match: one full spread per round trip is what the headline pays on its own fills,
+while the 3.23 is a whole-book subtraction between two separate replays — removing the spread
+moves which bar first touches a given stop or target, and that moves some exits. The gap is
+the timing component of the cost, and it is named rather than smoothed away.
 
 ### 4.5 The comparison that answers the hypothesis
 
 | | H1 (3,789 trades) | Daily (208 trades) |
 |---|---|---|
-| Gross edge per trade | **+0.033R** | **−0.032R** |
-| Spread paid per trade | **0.085R** (8.5% of risk) | **0.037R** (3.7% of risk) |
+| Gross edge per trade | **+0.032R** | **−0.042R** |
+| Spread paid per trade | **0.084R** (8.4% of risk) | **0.027R** (2.7% of risk) |
 | Net per trade | −0.052R | −0.069R |
 | Net in pips | −1.12 | −16.22 |
 
 Read that middle row carefully: **lower frequency more than halved the cost of a trade
-relative to the risk it takes** — 8.5% of 1R down to 3.7% of 1R. The structural argument in
+relative to the risk it takes** — 8.4% of 1R down to 2.7% of 1R. The structural argument in
 §2 is confirmed by measurement. But the top row moved the wrong way at the same time: the
 faint gross tendency that existed at H1 does not survive at the daily horizon. The cost lever
 worked; there is no edge at daily for it to protect.
@@ -272,7 +278,7 @@ longer dismissible over an 8-day median hold. This run therefore treats the dail
   **0.098R**. The 95% interval on per-trade expectancy is **−0.26R to +0.12R** (t = −0.70).
   **It contains zero.**
 - So the correct statement is three-part, and all three parts matter:
-  1. the point estimates are negative **with** cost (−0.069R) and **without** cost (−0.032R),
+  1. the point estimates are negative **with** cost (−0.069R) and **without** cost (−0.042R),
      so **there is no measured edge here to trade**;
   2. the sample is **too thin to establish a negative the way 3,789 hourly trades established
      one** — a +0.12R true edge would also have produced a result like this one;

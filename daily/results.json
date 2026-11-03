@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-26T12:53:11.266Z",
+  "generatedAt": "2026-11-03T00:25:18.523Z",
   "rulesetVersion": "v1",
   "granularity": "D",
   "engineCode": [
@@ -118,7 +118,7 @@
   "assumptions": {
     "fillHeadline": "entry at the NEXT bar's open, ASK for a long / BID for a short; exits at the opposite side. No look-ahead.",
     "fillOptimistic": "entry at the trigger bar's CLOSE (mid), exits at the exit bar's close (mid) — labelled OPTIMISTIC UPPER BOUND, not achievable.",
-    "fillZeroCost": "same timing as headline (next-bar open) but at MID on both sides, so the spread drag is visible.",
+    "fillZeroCost": "same timing as headline (mid OPEN of the bar after the trigger; a rule exit at the mid OPEN of the bar after the cross) at MID on both sides, so the spread drag is visible. CORRECTED 2026-11-02: this variant used to price those legs at the bars' CLOSES, which re-timed every trade by one bar; the pre-fix figure (−2,055.1 pips, PF 0.87) was not the spread-removed counterpart of the headline and is superseded by the stored one.",
     "intraBarAmbiguity": "if a bar touches both stop and target, the STOP is counted first.",
     "gaps": "a bar opening beyond the stop fills at that bar's open (worse than the stop); a bar opening beyond the target fills at that bar's open (better than the target).",
     "ruleExit": "an exit the rules trigger at a bar's close is filled at the NEXT bar's open, same no-look-ahead rule as entries.",
@@ -215,29 +215,29 @@
   },
   "costEdgeDecomposition": {
     "perTradePips": {
-      "grossEdge": -9.88,
-      "spreadPaid": 6.34,
+      "grossEdge": -12.99,
+      "spreadPaid": 3.23,
       "net": -16.22
     },
     "totals": {
-      "grossPips": -2055.1,
-      "spreadPaidPips": 1318.3,
+      "grossPips": -2702.4,
+      "spreadPaidPips": 671,
       "netPips": -3373.4
     },
     "meanSpreadAtEntryFillPips": 6.361,
     "inR": {
       "meanRiskPips": 127.3,
-      "grossEdgeR": -0.032,
-      "spreadPaidR": 0.037,
+      "grossEdgeR": -0.042,
+      "spreadPaidR": 0.027,
       "netR": -0.069,
-      "spreadPaidAsPctOfRisk": 0.03,
-      "note": "spread paid as a fraction of the trade's initial risk (1R = 1.5 x ATR(14)). This is the number that decides whether lower frequency improved the cost-to-edge ratio."
+      "spreadPaidAsPctOfRisk": 2.7,
+      "note": "spread paid as a percentage of the trade's initial risk (1R = 1.5 x ATR(14)). This is the number that decides whether lower frequency improved the cost-to-edge ratio."
     },
     "costAsMultipleOfGrossEdge": null,
     "howComputed": "spreadPaid = zero-cost expectancy (mid fills, same timing) minus headline expectancy (next-bar open at ask/bid). Both from the stored results; nothing typed by hand. The zero-cost replay fills at mid and can exit on a mid high/low rather than a bid/ask one, so a handful of trades may exit on a different bar; the subtraction is therefore a whole-book cost measure, not a per-trade ledger.",
     "crossCheck": {
       "meanSpreadAtEntryFillPips": 6.361,
-      "note": "one full spread per round trip (enter at ask / exit at bid, or the reverse) should equal the spread-paid figure above if the two runs took the same trades"
+      "note": "one full spread per round trip (enter at ask / exit at bid, or the reverse) is the per-trade cost the headline should pay; the spreadPaid figure above is a whole-book subtraction between two separate replays, and it comes out smaller than one full spread because the mid series touches a given stop or target on a different bar than the bid/ask series does, which moves some exits. The two are a decomposition and its cross-check, not the same quantity."
     }
   },
   "results": {
@@ -546,22 +546,23 @@
       }
     },
     "zeroCost_mid_nextBarOpen": {
+      "convention": "mid OPEN on both sides, same bar instants as the headline; spread removed, timing held",
       "fullPeriod": {
         "perPair": {
           "EUR/USD": {
             "trades": 63,
-            "wins": 18,
-            "losses": 45,
-            "winRatePct": 28.6,
-            "avgWinPips": 194.2,
-            "avgLossPips": -112,
-            "expectancyPipsPerTrade": -24.53,
-            "totalPips": -1545.2,
-            "avgRPerTrade": -0.2,
-            "totalR": -12.62,
-            "maxDrawdownPips": 2160.5,
-            "maxDrawdownR": 15.88,
-            "profitFactor": 0.69,
+            "wins": 15,
+            "losses": 48,
+            "winRatePct": 23.8,
+            "avgWinPips": 235.9,
+            "avgLossPips": -131.6,
+            "expectancyPipsPerTrade": -44.1,
+            "totalPips": -2778.2,
+            "avgRPerTrade": -0.309,
+            "totalR": -19.44,
+            "maxDrawdownPips": 3100.1,
+            "maxDrawdownR": 23.62,
+            "profitFactor": 0.56,
             "longestLosingStreak": 11,
             "medianHoldingDays": 8,
             "meanHoldingDays": 12.1,
@@ -580,18 +581,18 @@
           },
           "GBP/USD": {
             "trades": 49,
-            "wins": 19,
-            "losses": 30,
-            "winRatePct": 38.8,
-            "avgWinPips": 249.7,
-            "avgLossPips": -154.1,
-            "expectancyPipsPerTrade": 2.48,
-            "totalPips": 121.3,
-            "avgRPerTrade": 0.041,
-            "totalR": 2.03,
-            "maxDrawdownPips": 1193.7,
-            "maxDrawdownR": 6.62,
-            "profitFactor": 1.03,
+            "wins": 17,
+            "losses": 32,
+            "winRatePct": 34.7,
+            "avgWinPips": 304.6,
+            "avgLossPips": -153.6,
+            "expectancyPipsPerTrade": 5.37,
+            "totalPips": 263.2,
+            "avgRPerTrade": 0.054,
+            "totalR": 2.63,
+            "maxDrawdownPips": 1438.9,
+            "maxDrawdownR": 8,
+            "profitFactor": 1.05,
             "longestLosingStreak": 8,
             "medianHoldingDays": 8,
             "meanHoldingDays": 12.2,
@@ -610,18 +611,18 @@
           },
           "USD/JPY": {
             "trades": 48,
-            "wins": 14,
-            "losses": 34,
-            "winRatePct": 29.2,
-            "avgWinPips": 176.3,
-            "avgLossPips": -112.8,
-            "expectancyPipsPerTrade": -28.45,
-            "totalPips": -1365.7,
-            "avgRPerTrade": -0.176,
-            "totalR": -8.45,
-            "maxDrawdownPips": 2542.1,
-            "maxDrawdownR": 18.81,
-            "profitFactor": 0.64,
+            "wins": 13,
+            "losses": 35,
+            "winRatePct": 27.1,
+            "avgWinPips": 205.2,
+            "avgLossPips": -111.3,
+            "expectancyPipsPerTrade": -25.58,
+            "totalPips": -1228,
+            "avgRPerTrade": -0.155,
+            "totalR": -7.46,
+            "maxDrawdownPips": 2448.1,
+            "maxDrawdownR": 18.13,
+            "profitFactor": 0.68,
             "longestLosingStreak": 12,
             "medianHoldingDays": 7,
             "meanHoldingDays": 12.6,
@@ -640,18 +641,18 @@
           },
           "AUD/USD": {
             "trades": 48,
-            "wins": 22,
-            "losses": 26,
-            "winRatePct": 45.8,
-            "avgWinPips": 165.3,
-            "avgLossPips": -111.6,
-            "expectancyPipsPerTrade": 15.3,
-            "totalPips": 734.6,
-            "avgRPerTrade": 0.257,
-            "totalR": 12.35,
-            "maxDrawdownPips": 622.6,
-            "maxDrawdownR": 7.16,
-            "profitFactor": 1.25,
+            "wins": 21,
+            "losses": 27,
+            "winRatePct": 43.8,
+            "avgWinPips": 187.4,
+            "avgLossPips": -107.2,
+            "expectancyPipsPerTrade": 21.68,
+            "totalPips": 1040.7,
+            "avgRPerTrade": 0.322,
+            "totalR": 15.46,
+            "maxDrawdownPips": 532.7,
+            "maxDrawdownR": 6.76,
+            "profitFactor": 1.36,
             "longestLosingStreak": 7,
             "medianHoldingDays": 12,
             "meanHoldingDays": 16.5,
@@ -671,19 +672,19 @@
         },
         "combined": {
           "trades": 208,
-          "wins": 73,
-          "losses": 135,
-          "winRatePct": 35.1,
-          "avgWinPips": 196.5,
-          "avgLossPips": -121.5,
-          "expectancyPipsPerTrade": -9.88,
-          "totalPips": -2055.1,
-          "avgRPerTrade": -0.032,
-          "totalR": -6.69,
-          "maxDrawdownPips": 3213.5,
-          "maxDrawdownR": 25.92,
-          "profitFactor": 0.87,
-          "longestLosingStreak": 10,
+          "wins": 66,
+          "losses": 142,
+          "winRatePct": 31.7,
+          "avgWinPips": 232.1,
+          "avgLossPips": -126.9,
+          "expectancyPipsPerTrade": -12.99,
+          "totalPips": -2702.4,
+          "avgRPerTrade": -0.042,
+          "totalR": -8.81,
+          "maxDrawdownPips": 3846.7,
+          "maxDrawdownR": 26.67,
+          "profitFactor": 0.85,
+          "longestLosingStreak": 18,
           "medianHoldingDays": 8,
           "meanHoldingDays": 13.3,
           "p90HoldingDays": 32,
@@ -707,15 +708,15 @@
             "wins": 1,
             "losses": 2,
             "winRatePct": 33.3,
-            "avgWinPips": 76.5,
-            "avgLossPips": -110.6,
-            "expectancyPipsPerTrade": -48.25,
-            "totalPips": -144.7,
-            "avgRPerTrade": -0.426,
-            "totalR": -1.28,
-            "maxDrawdownPips": 221.3,
-            "maxDrawdownR": 2.36,
-            "profitFactor": 0.35,
+            "avgWinPips": 141.8,
+            "avgLossPips": -95.6,
+            "expectancyPipsPerTrade": -16.45,
+            "totalPips": -49.3,
+            "avgRPerTrade": 0.025,
+            "totalR": 0.08,
+            "maxDrawdownPips": 191.2,
+            "maxDrawdownR": 1.93,
+            "profitFactor": 0.74,
             "longestLosingStreak": 2,
             "medianHoldingDays": 12,
             "meanHoldingDays": 18.3,
@@ -736,15 +737,15 @@
             "wins": 1,
             "losses": 2,
             "winRatePct": 33.3,
-            "avgWinPips": 175.4,
-            "avgLossPips": -137.6,
-            "expectancyPipsPerTrade": -33.28,
-            "totalPips": -99.9,
-            "avgRPerTrade": -0.14,
-            "totalR": -0.42,
-            "maxDrawdownPips": 275.3,
-            "maxDrawdownR": 2.02,
-            "profitFactor": 0.64,
+            "avgWinPips": 224.5,
+            "avgLossPips": -119.1,
+            "expectancyPipsPerTrade": -4.55,
+            "totalPips": -13.7,
+            "avgRPerTrade": 0.087,
+            "totalR": 0.26,
+            "maxDrawdownPips": 238.2,
+            "maxDrawdownR": 1.78,
+            "profitFactor": 0.94,
             "longestLosingStreak": 2,
             "medianHoldingDays": 25,
             "meanHoldingDays": 23,
@@ -765,15 +766,15 @@
             "wins": 1,
             "losses": 1,
             "winRatePct": 50,
-            "avgWinPips": 295.2,
-            "avgLossPips": -227.2,
-            "expectancyPipsPerTrade": 34.01,
-            "totalPips": 68,
-            "avgRPerTrade": 0.344,
-            "totalR": 0.69,
-            "maxDrawdownPips": 227.2,
-            "maxDrawdownR": 1.17,
-            "profitFactor": 1.3,
+            "avgWinPips": 320,
+            "avgLossPips": -198.7,
+            "expectancyPipsPerTrade": 60.66,
+            "totalPips": 121.3,
+            "avgRPerTrade": 0.496,
+            "totalR": 0.99,
+            "maxDrawdownPips": 198.7,
+            "maxDrawdownR": 1.03,
+            "profitFactor": 1.61,
             "longestLosingStreak": 1,
             "medianHoldingDays": 64,
             "meanHoldingDays": 53,
@@ -794,12 +795,12 @@
             "wins": 2,
             "losses": 0,
             "winRatePct": 100,
-            "avgWinPips": 114.6,
+            "avgWinPips": 129.9,
             "avgLossPips": null,
-            "expectancyPipsPerTrade": 114.57,
-            "totalPips": 229.1,
-            "avgRPerTrade": 1.748,
-            "totalR": 3.5,
+            "expectancyPipsPerTrade": 129.92,
+            "totalPips": 259.8,
+            "avgRPerTrade": 1.988,
+            "totalR": 3.98,
             "maxDrawdownPips": 0,
             "maxDrawdownR": 0,
             "profitFactor": null,
@@ -823,15 +824,15 @@
           "wins": 5,
           "losses": 5,
           "winRatePct": 50,
-          "avgWinPips": 155.3,
-          "avgLossPips": -144.7,
-          "expectancyPipsPerTrade": 5.26,
-          "totalPips": 52.6,
-          "avgRPerTrade": 0.249,
-          "totalR": 2.49,
-          "maxDrawdownPips": 490.2,
-          "maxDrawdownR": 3.11,
-          "profitFactor": 1.07,
+          "avgWinPips": 189.2,
+          "avgLossPips": -125.6,
+          "expectancyPipsPerTrade": 31.82,
+          "totalPips": 318.2,
+          "avgRPerTrade": 0.531,
+          "totalR": 5.31,
+          "maxDrawdownPips": 433.4,
+          "maxDrawdownR": 2.8,
+          "profitFactor": 1.51,
           "longestLosingStreak": 3,
           "medianHoldingDays": 32,
           "meanHoldingDays": 27.7,
@@ -2180,14 +2181,14 @@
       },
       "zeroCost": {
         "trades": 3789,
-        "winRatePct": 37.4,
-        "expectancyPipsPerTrade": 1.13,
-        "totalPips": 4289.1,
-        "totalR": 125.47,
-        "profitFactor": 1.07,
-        "maxDrawdownPips": 1463.2,
-        "maxDrawdownR": 49.03,
-        "longestLosingStreak": 16
+        "winRatePct": 33.6,
+        "expectancyPipsPerTrade": 1,
+        "totalPips": 3785.2,
+        "totalR": 121.2,
+        "profitFactor": 1.05,
+        "maxDrawdownPips": 1955.3,
+        "maxDrawdownR": 57.05,
+        "longestLosingStreak": 17
       },
       "last12MonthsHeadline": {
         "trades": 173,
@@ -2202,14 +2203,14 @@
       },
       "last12MonthsZeroCost": {
         "trades": 173,
-        "winRatePct": 34.7,
-        "expectancyPipsPerTrade": -1.3,
-        "totalPips": -225.2,
-        "totalR": -1.83,
-        "profitFactor": 0.9,
-        "maxDrawdownPips": 381.5,
-        "maxDrawdownR": 12.13,
-        "longestLosingStreak": 10
+        "winRatePct": 30.6,
+        "expectancyPipsPerTrade": -2.12,
+        "totalPips": -367.2,
+        "totalR": -8.86,
+        "profitFactor": 0.85,
+        "maxDrawdownPips": 513.1,
+        "maxDrawdownR": 17.73,
+        "longestLosingStreak": 15
       },
       "medianHoldingHours": 8
     }
@@ -2238,7 +2239,7 @@
         "pips": -142.9999999999998,
         "r": -1.9208524532492743,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": 1.999999999999801
+        "spreadCostPips": 0.9999999999999147
       },
       {
         "pair": "EUR/USD",
@@ -2262,7 +2263,7 @@
         "pips": 122.99999999999977,
         "r": 1.9015086388206393,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": 1.9999999999997726
+        "spreadCostPips": 0.9999999999998863
       },
       {
         "pair": "EUR/USD",
@@ -2286,7 +2287,7 @@
         "pips": 193.9999999999986,
         "r": 2.1120502960908927,
         "spreadAtFillPips": 2.000000000002,
-        "spreadCostPips": 2.0000000000019895
+        "spreadCostPips": 1.0000000000021032
       },
       {
         "pair": "EUR/USD",
@@ -2310,7 +2311,7 @@
         "pips": -200.00000000000017,
         "r": -2.395271915342735,
         "spreadAtFillPips": 2.000000000002,
-        "spreadCostPips": 2.0000000000019895
+        "spreadCostPips": 1.0000000000021032
       },
       {
         "pair": "EUR/USD",
@@ -2334,7 +2335,7 @@
         "pips": -235.49999999999957,
         "r": -3.268478382521193,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 5.999999999999318
+        "spreadCostPips": 4.999999999999432
       },
       {
         "pair": "EUR/USD",
@@ -2358,7 +2359,7 @@
         "pips": -1.80000000000069,
         "r": -0.028275121329117952,
         "spreadAtFillPips": 1.80000000000069,
-        "spreadCostPips": 1.80000000000069
+        "spreadCostPips": 0.8999999999992347
       },
       {
         "pair": "EUR/USD",
@@ -2382,7 +2383,7 @@
         "pips": -138.260012385214,
         "r": -1.0375206328628037,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 34.360012385215015
+        "spreadCostPips": 4.999999999999432
       },
       {
         "pair": "EUR/USD",
@@ -2406,7 +2407,7 @@
         "pips": -114.70334303737228,
         "r": -1.0150438027257027,
         "spreadAtFillPips": 1.4999999999987246,
-        "spreadCostPips": 76.30334303737163
+        "spreadCostPips": 0.700000000000145
       },
       {
         "pair": "EUR/USD",
@@ -2430,7 +2431,7 @@
         "pips": -115.76062175311374,
         "r": -1.0078355835643475,
         "spreadAtFillPips": 1.80000000000069,
-        "spreadCostPips": -62.03937824688755
+        "spreadCostPips": 0.8999999999992383
       },
       {
         "pair": "EUR/USD",
@@ -2454,7 +2455,7 @@
         "pips": -107.7792108700959,
         "r": -1.0074780884388137,
         "spreadAtFillPips": 1.500000000000945,
-        "spreadCostPips": -15.420789129902971
+        "spreadCostPips": 0.8000000000008072
       },
       {
         "pair": "EUR/USD",
@@ -2478,7 +2479,7 @@
         "pips": -137.6857767388384,
         "r": -1.02227406688843,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": 5.685776738837404
+        "spreadCostPips": 5.0000000000016485
       },
       {
         "pair": "EUR/USD",
@@ -2502,7 +2503,7 @@
         "pips": -82.20000000000115,
         "r": -0.795984199977283,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": 25.600000000001174
+        "spreadCostPips": 5.80000000000247
       },
       {
         "pair": "EUR/USD",
@@ -2526,7 +2527,7 @@
         "pips": -74.19999999999982,
         "r": -0.5983891541389369,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 40.79999999999861
+        "spreadCostPips": 5.800000000000253
       },
       {
         "pair": "EUR/USD",
@@ -2550,7 +2551,7 @@
         "pips": -86.61761722440042,
         "r": -1.00814733954005,
         "spreadAtFillPips": 1.500000000000945,
-        "spreadCostPips": 86.61761722440042
+        "spreadCostPips": 0.700000000000145
       },
       {
         "pair": "EUR/USD",
@@ -2574,7 +2575,7 @@
         "pips": 190.9541858529451,
         "r": 1.9958192709689826,
         "spreadAtFillPips": 1.2000000000012,
-        "spreadCostPips": -11.254185852944687
+        "spreadCostPips": 0.6000000000016996
       },
       {
         "pair": "EUR/USD",
@@ -2598,7 +2599,7 @@
         "pips": -74.02163713180698,
         "r": -1.0081719779542058,
         "spreadAtFillPips": 1.2000000000012,
-        "spreadCostPips": -76.87836286819348
+        "spreadCostPips": 0.6000000000017138
       },
       {
         "pair": "EUR/USD",
@@ -2622,7 +2623,7 @@
         "pips": 147.44086130844548,
         "r": 2.013657390308497,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 58.259138691554284
+        "spreadCostPips": 4.999999999999432
       },
       {
         "pair": "EUR/USD",
@@ -2646,7 +2647,7 @@
         "pips": 218.89229658305308,
         "r": 1.9990867258660698,
         "spreadAtFillPips": 1.2000000000012,
-        "spreadCostPips": -84.39229658305348
+        "spreadCostPips": 0.6000000000016996
       },
       {
         "pair": "EUR/USD",
@@ -2670,7 +2671,7 @@
         "pips": -150.57645511976636,
         "r": -1.0357692034498807,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 19.076455119766422
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "EUR/USD",
@@ -2694,7 +2695,7 @@
         "pips": 290.6256236851101,
         "r": 1.9655085688115332,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 25.574376314891936
+        "spreadCostPips": 4.999999999999488
       },
       {
         "pair": "EUR/USD",
@@ -2718,7 +2719,7 @@
         "pips": -189.36289295789388,
         "r": -1.0271204249389878,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 273.26289295789286
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "EUR/USD",
@@ -2742,7 +2743,7 @@
         "pips": -186.0366569914573,
         "r": -1.0054043345586674,
         "spreadAtFillPips": 1.2000000000012,
-        "spreadCostPips": -20.06334300854064
+        "spreadCostPips": 0.6000000000016996
       },
       {
         "pair": "EUR/USD",
@@ -2766,7 +2767,7 @@
         "pips": -323.87853917506203,
         "r": -1.0040300263102588,
         "spreadAtFillPips": 2.4999999999986144,
-        "spreadCostPips": -242.8214608249379
+        "spreadCostPips": 1.2999999999996135
       },
       {
         "pair": "EUR/USD",
@@ -2790,7 +2791,7 @@
         "pips": -153.8878178614955,
         "r": -1.0111704078807877,
         "spreadAtFillPips": 1.80000000000069,
-        "spreadCostPips": 60.38781786149582
+        "spreadCostPips": 0.8999999999992383
       },
       {
         "pair": "EUR/USD",
@@ -2814,7 +2815,7 @@
         "pips": -193.8651651328893,
         "r": -1.0264739132623013,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": -94.4348348671098
+        "spreadCostPips": 4.999999999999432
       },
       {
         "pair": "EUR/USD",
@@ -2838,7 +2839,7 @@
         "pips": -180.3431656750698,
         "r": -1.0055759024673996,
         "spreadAtFillPips": 2.500000000000835,
-        "spreadCostPips": 82.1431656750704
+        "spreadCostPips": 1.1999999999989939
       },
       {
         "pair": "EUR/USD",
@@ -2862,7 +2863,7 @@
         "pips": -187.61966391884542,
         "r": -1.0273793078615074,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": -18.480336081154746
+        "spreadCostPips": 4.999999999999432
       },
       {
         "pair": "EUR/USD",
@@ -2886,7 +2887,7 @@
         "pips": -132.69999999999894,
         "r": -0.7026220017391196,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": 60.00000000000006
+        "spreadCostPips": 1.999999999999801
       },
       {
         "pair": "EUR/USD",
@@ -2910,7 +2911,7 @@
         "pips": -197.37063186855417,
         "r": -1.0030492355200609,
         "spreadAtFillPips": 1.80000000000069,
-        "spreadCostPips": 197.37063186855417
+        "spreadCostPips": 0.9000000000014552
       },
       {
         "pair": "EUR/USD",
@@ -2934,7 +2935,7 @@
         "pips": -227.0502256576745,
         "r": -1.0035359080755657,
         "spreadAtFillPips": 2.000000000002,
-        "spreadCostPips": 99.85022565767608
+        "spreadCostPips": 0.9999999999998863
       },
       {
         "pair": "EUR/USD",
@@ -2958,7 +2959,7 @@
         "pips": 490.02992826460144,
         "r": 1.9947082401245488,
         "spreadAtFillPips": 3.9999999999995595,
-        "spreadCostPips": 224.5700717353971
+        "spreadCostPips": 1.9999999999997726
       },
       {
         "pair": "EUR/USD",
@@ -2982,7 +2983,7 @@
         "pips": -145.05043981885902,
         "r": -1.0048493097830367,
         "spreadAtFillPips": 1.80000000000069,
-        "spreadCostPips": 82.15043981885995
+        "spreadCostPips": 0.9000000000014552
       },
       {
         "pair": "EUR/USD",
@@ -3006,7 +3007,7 @@
         "pips": -121.34870100849015,
         "r": -1.0465723199400345,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": 7.948701008491099
+        "spreadCostPips": 4.999999999999446
       },
       {
         "pair": "EUR/USD",
@@ -3030,7 +3031,7 @@
         "pips": 216.40105690792888,
         "r": 1.9116611897790845,
         "spreadAtFillPips": 20.000000000000018,
-        "spreadCostPips": -25.001056907929524
+        "spreadCostPips": 10.000000000001108
       },
       {
         "pair": "EUR/USD",
@@ -3054,7 +3055,7 @@
         "pips": 186.88295035575564,
         "r": 1.9788228636175753,
         "spreadAtFillPips": 3.4999999999985043,
-        "spreadCostPips": 4.517049644243713
+        "spreadCostPips": 1.7999999999984482
       },
       {
         "pair": "EUR/USD",
@@ -3078,7 +3079,7 @@
         "pips": -168.61919401810698,
         "r": -1.0779955431722068,
         "spreadAtFillPips": 7.600000000000939,
-        "spreadCostPips": 82.31919401810784
+        "spreadCostPips": 3.800000000000466
       },
       {
         "pair": "EUR/USD",
@@ -3102,7 +3103,7 @@
         "pips": 323.43824250972597,
         "r": 1.98770888150959,
         "spreadAtFillPips": 3.9999999999995595,
-        "spreadCostPips": -26.23824250972632
+        "spreadCostPips": 1.9999999999997726
       },
       {
         "pair": "EUR/USD",
@@ -3126,7 +3127,7 @@
         "pips": 214.64616361358102,
         "r": 1.8295305604660497,
         "spreadAtFillPips": 6.00000000000156,
-        "spreadCostPips": -51.4461636135799
+        "spreadCostPips": 3.000000000001876
       },
       {
         "pair": "EUR/USD",
@@ -3150,7 +3151,7 @@
         "pips": -188.94330861290996,
         "r": -1.0010596402143714,
         "spreadAtFillPips": 5.999999999999339,
-        "spreadCostPips": 188.94330861290996
+        "spreadCostPips": 2.999999999999659
       },
       {
         "pair": "EUR/USD",
@@ -3174,7 +3175,7 @@
         "pips": -203.86364540961432,
         "r": -1.0220591576523343,
         "spreadAtFillPips": 5.999999999999339,
-        "spreadCostPips": 118.26364540961532
+        "spreadCostPips": 2.9999999999996874
       },
       {
         "pair": "EUR/USD",
@@ -3198,7 +3199,7 @@
         "pips": 324.595808479462,
         "r": 1.9914109325114995,
         "spreadAtFillPips": 4.700000000001925,
-        "spreadCostPips": 16.504191520538825
+        "spreadCostPips": 2.4000000000002046
       },
       {
         "pair": "EUR/USD",
@@ -3222,7 +3223,7 @@
         "pips": -118.81572362959058,
         "r": -1.0241346596168308,
         "spreadAtFillPips": 6.999999999999229,
-        "spreadCostPips": 54.61572362959188
+        "spreadCostPips": 3.5000000000007248
       },
       {
         "pair": "EUR/USD",
@@ -3246,7 +3247,7 @@
         "pips": -131.28787455856994,
         "r": -1.0379483015012445,
         "spreadAtFillPips": 5.5000000000005045,
-        "spreadCostPips": 78.28787455857133
+        "spreadCostPips": 2.80000000000058
       },
       {
         "pair": "EUR/USD",
@@ -3270,7 +3271,7 @@
         "pips": -99.61882482525607,
         "r": -0.9871183597088915,
         "spreadAtFillPips": 5.1000000000001044,
-        "spreadCostPips": -17.28117517474371
+        "spreadCostPips": 2.5000000000008242
       },
       {
         "pair": "EUR/USD",
@@ -3294,7 +3295,7 @@
         "pips": -103.0491872174255,
         "r": -0.9726283884174801,
         "spreadAtFillPips": 10.700000000001264,
-        "spreadCostPips": 52.449187217427074
+        "spreadCostPips": 5.399999999999849
       },
       {
         "pair": "EUR/USD",
@@ -3318,7 +3319,7 @@
         "pips": -134.33568638007597,
         "r": -1.0558019546402497,
         "spreadAtFillPips": 4.300000000001525,
-        "spreadCostPips": 88.735686380077
+        "spreadCostPips": 2.1000000000004206
       },
       {
         "pair": "EUR/USD",
@@ -3342,7 +3343,7 @@
         "pips": -112.6374124160967,
         "r": -1.0189980926285245,
         "spreadAtFillPips": 7.099999999999884,
-        "spreadCostPips": -7.762587583901592
+        "spreadCostPips": 3.4999999999984936
       },
       {
         "pair": "EUR/USD",
@@ -3366,7 +3367,7 @@
         "pips": -98.08247482413712,
         "r": -1.0197541184449013,
         "spreadAtFillPips": 5.399999999999849,
-        "spreadCostPips": 7.682474824135539
+        "spreadCostPips": 2.699999999999932
       },
       {
         "pair": "EUR/USD",
@@ -3390,7 +3391,7 @@
         "pips": -87.4014346276164,
         "r": -1.0139208820036734,
         "spreadAtFillPips": 2.7999999999983594,
-        "spreadCostPips": 87.4014346276164
+        "spreadCostPips": 1.40000000000029
       },
       {
         "pair": "EUR/USD",
@@ -3414,7 +3415,7 @@
         "pips": 151.2370366550497,
         "r": 1.9894762484510466,
         "spreadAtFillPips": 2.4999999999986144,
-        "spreadCostPips": -84.73703665504927
+        "spreadCostPips": 1.2999999999996419
       },
       {
         "pair": "EUR/USD",
@@ -3438,7 +3439,7 @@
         "pips": -75.31637576927207,
         "r": -1.0787780794892219,
         "spreadAtFillPips": 8.299999999998864,
-        "spreadCostPips": 23.016375769273616
+        "spreadCostPips": 4.1000000000002075
       },
       {
         "pair": "EUR/USD",
@@ -3462,7 +3463,7 @@
         "pips": -67.60807157458082,
         "r": -1.0165393458862644,
         "spreadAtFillPips": 2.300000000001745,
-        "spreadCostPips": -4.7919284254205365
+        "spreadCostPips": 1.1000000000005485
       },
       {
         "pair": "EUR/USD",
@@ -3486,7 +3487,7 @@
         "pips": -220.47662038007454,
         "r": -0.9722193584618972,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": -85.62337961992571
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "EUR/USD",
@@ -3510,7 +3511,7 @@
         "pips": -99.77472619639993,
         "r": -1.0363542971065882,
         "spreadAtFillPips": 5.799999999998029,
-        "spreadCostPips": 12.974726196399715
+        "spreadCostPips": 2.899999999999011
       },
       {
         "pair": "EUR/USD",
@@ -3534,7 +3535,7 @@
         "pips": -137.27276883535922,
         "r": -1.0785714029128621,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 137.27276883535922
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "EUR/USD",
@@ -3558,7 +3559,7 @@
         "pips": 282.72555189019056,
         "r": 1.995060431246725,
         "spreadAtFillPips": 8.499999999997954,
-        "spreadCostPips": -4.9255518901914
+        "spreadCostPips": 4.299999999999272
       },
       {
         "pair": "EUR/USD",
@@ -3582,7 +3583,7 @@
         "pips": -109.30154987297102,
         "r": -1.0195892690216528,
         "spreadAtFillPips": 4.299999999999304,
-        "spreadCostPips": 49.50154987297006
+        "spreadCostPips": 2.100000000000435
       },
       {
         "pair": "EUR/USD",
@@ -3606,7 +3607,7 @@
         "pips": -83.43165426845988,
         "r": -1.00120002417902,
         "spreadAtFillPips": 4.500000000000615,
-        "spreadCostPips": 10.731654268461
+        "spreadCostPips": 2.300000000001745
       },
       {
         "pair": "EUR/USD",
@@ -3630,7 +3631,7 @@
         "pips": -95.31045294375095,
         "r": -1.0214338258673559,
         "spreadAtFillPips": 3.1999999999987594,
-        "spreadCostPips": -3.8895470562483325
+        "spreadCostPips": 1.599999999999369
       },
       {
         "pair": "EUR/USD",
@@ -3654,7 +3655,7 @@
         "pips": -26.800000000000157,
         "r": -0.25310204820034826,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": 17.000000000000348
+        "spreadCostPips": 8.099999999999774
       },
       {
         "pair": "EUR/USD",
@@ -3678,7 +3679,7 @@
         "pips": -83.13308833374666,
         "r": -1.0246508550466105,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": -45.86691166625246
+        "spreadCostPips": 4.999999999999446
       },
       {
         "pair": "EUR/USD",
@@ -3702,7 +3703,7 @@
         "pips": -117.76271867740107,
         "r": -1.01203134488357,
         "spreadAtFillPips": 9.399999999999409,
-        "spreadCostPips": 29.762718677401878
+        "spreadCostPips": 4.699999999999704
       },
       {
         "pair": "EUR/USD",
@@ -3726,7 +3727,7 @@
         "pips": 137.347746002503,
         "r": 1.9461557111945318,
         "spreadAtFillPips": 9.00000000000123,
-        "spreadCostPips": 4.0522539974974165
+        "spreadCostPips": 4.500000000000625
       }
     ],
     "GBP_USD": [
@@ -3752,7 +3753,7 @@
         "pips": 30.000000000001137,
         "r": 0.3716328063540658,
         "spreadAtFillPips": 4.999999999999449,
-        "spreadCostPips": 4.999999999997229
+        "spreadCostPips": 2.4999999999986144
       },
       {
         "pair": "GBP/USD",
@@ -3776,7 +3777,7 @@
         "pips": -2.9999999999996696,
         "r": -0.023019831888663918,
         "spreadAtFillPips": 2.9999999999996696,
-        "spreadCostPips": 2.9999999999996696
+        "spreadCostPips": 1.500000000000945
       },
       {
         "pair": "GBP/USD",
@@ -3800,7 +3801,7 @@
         "pips": -153.0000000000009,
         "r": -0.956831986063618,
         "spreadAtFillPips": 2.9999999999996696,
-        "spreadCostPips": 3.0000000000019043
+        "spreadCostPips": 1.500000000000938
       },
       {
         "pair": "GBP/USD",
@@ -3824,7 +3825,7 @@
         "pips": -138.00000000000034,
         "r": -1.1072436253342421,
         "spreadAtFillPips": 4.999999999999449,
-        "spreadCostPips": 7.500000000000284
+        "spreadCostPips": 2.5000000000008242
       },
       {
         "pair": "GBP/USD",
@@ -3848,7 +3849,7 @@
         "pips": 194.00000000000082,
         "r": 2.210038349276255,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 6.999999999999233
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "GBP/USD",
@@ -3872,7 +3873,7 @@
         "pips": -173.76529627449509,
         "r": -1.0116437955942137,
         "spreadAtFillPips": 3.9999999999995595,
-        "spreadCostPips": 52.7652962744951
+        "spreadCostPips": 1.9999999999997726
       },
       {
         "pair": "GBP/USD",
@@ -3896,7 +3897,7 @@
         "pips": -187.3156737939019,
         "r": -0.9999999999999994,
         "spreadAtFillPips": 3.9999999999995595,
-        "spreadCostPips": 160.31567379390265
+        "spreadCostPips": 1.999999999999801
       },
       {
         "pair": "GBP/USD",
@@ -3920,7 +3921,7 @@
         "pips": -172.5594216440629,
         "r": -1.0454381817487144,
         "spreadAtFillPips": 15.000000000000568,
-        "spreadCostPips": 129.5594216440632
+        "spreadCostPips": 7.500000000000284
       },
       {
         "pair": "GBP/USD",
@@ -3944,7 +3945,7 @@
         "pips": -168.42720519336885,
         "r": -1.0212214837200133,
         "spreadAtFillPips": 6.999999999999229,
-        "spreadCostPips": -144.57279480662996
+        "spreadCostPips": 3.499999999998522
       },
       {
         "pair": "GBP/USD",
@@ -3968,7 +3969,7 @@
         "pips": -168.38650646679332,
         "r": -1.0243328974255435,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": 108.8865064667921
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "GBP/USD",
@@ -3992,7 +3993,7 @@
         "pips": -178.01286785782855,
         "r": -1.0288995845332634,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 121.91286785782962
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "GBP/USD",
@@ -4016,7 +4017,7 @@
         "pips": -197.99042677389522,
         "r": -1.0393720573102734,
         "spreadAtFillPips": 14.999999999998348,
-        "spreadCostPips": -3.9095732261040723
+        "spreadCostPips": 7.500000000000284
       },
       {
         "pair": "GBP/USD",
@@ -4040,7 +4041,7 @@
         "pips": -150.40639387299714,
         "r": -1.0488123284530728,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 57.10639387299655
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "GBP/USD",
@@ -4064,7 +4065,7 @@
         "pips": 318.8887328656431,
         "r": 1.987534619977832,
         "spreadAtFillPips": 3.9999999999995595,
-        "spreadCostPips": 92.61126713435709
+        "spreadCostPips": 1.9999999999998295
       },
       {
         "pair": "GBP/USD",
@@ -4088,7 +4089,7 @@
         "pips": 209.70772335337838,
         "r": 1.983917333075292,
         "spreadAtFillPips": 4.00000000000178,
-        "spreadCostPips": 33.892276646620985
+        "spreadCostPips": 1.9999999999997726
       },
       {
         "pair": "GBP/USD",
@@ -4112,7 +4113,7 @@
         "pips": -183.5939628405292,
         "r": -1.0308825740765029,
         "spreadAtFillPips": 10.00000000000334,
-        "spreadCostPips": -21.406037159468184
+        "spreadCostPips": 5.000000000001677
       },
       {
         "pair": "GBP/USD",
@@ -4136,7 +4137,7 @@
         "pips": 371.1446825912601,
         "r": 1.9734144852690336,
         "spreadAtFillPips": 10.00000000000334,
-        "spreadCostPips": 28.8553174087358
+        "spreadCostPips": 5.0000000000016485
       },
       {
         "pair": "GBP/USD",
@@ -4160,7 +4161,7 @@
         "pips": -229.53409942399583,
         "r": -1.0087898912957007,
         "spreadAtFillPips": 4.00000000000178,
-        "spreadCostPips": -59.465900576003435
+        "spreadCostPips": 2.000000000002018
       },
       {
         "pair": "GBP/USD",
@@ -4184,7 +4185,7 @@
         "pips": 327.062762918171,
         "r": 1.9890531844710637,
         "spreadAtFillPips": 3.5000000000007248,
-        "spreadCostPips": -58.162762918170245
+        "spreadCostPips": 1.8000000000006935
       },
       {
         "pair": "GBP/USD",
@@ -4208,7 +4209,7 @@
         "pips": -221.3176843445752,
         "r": -1.0137414429298641,
         "spreadAtFillPips": 7.0000000000014495,
-        "spreadCostPips": -158.8823156554242
+        "spreadCostPips": 3.500000000000739
       },
       {
         "pair": "GBP/USD",
@@ -4232,7 +4233,7 @@
         "pips": -222.92626192456086,
         "r": -1.0122601181911974,
         "spreadAtFillPips": 3.20000000000098,
-        "spreadCostPips": 222.92626192456086
+        "spreadCostPips": 1.599999999999369
       },
       {
         "pair": "GBP/USD",
@@ -4256,7 +4257,7 @@
         "pips": 352.660821204549,
         "r": 1.992654554277643,
         "spreadAtFillPips": 3.4999999999985043,
-        "spreadCostPips": -83.16082120454871
+        "spreadCostPips": 1.7000000000000455
       },
       {
         "pair": "GBP/USD",
@@ -4280,7 +4281,7 @@
         "pips": 356.30498598274494,
         "r": 1.994960876609695,
         "spreadAtFillPips": 3.5000000000007248,
-        "spreadCostPips": -103.10498598274708
+        "spreadCostPips": 1.7000000000000455
       },
       {
         "pair": "GBP/USD",
@@ -4304,7 +4305,7 @@
         "pips": 364.6457474638698,
         "r": 1.9989036462593233,
         "spreadAtFillPips": 3.5000000000007248,
-        "spreadCostPips": -191.84574746387017
+        "spreadCostPips": 1.8000000000006935
       },
       {
         "pair": "GBP/USD",
@@ -4328,7 +4329,7 @@
         "pips": -158.2814320913317,
         "r": -1.0326197369882382,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": -9.518567908668444
+        "spreadCostPips": 4.99999999999946
       },
       {
         "pair": "GBP/USD",
@@ -4352,7 +4353,7 @@
         "pips": -140.96871810465484,
         "r": -1.0151221961911951,
         "spreadAtFillPips": 3.4999999999985043,
-        "spreadCostPips": -131.43128189534667
+        "spreadCostPips": 1.7000000000000455
       },
       {
         "pair": "GBP/USD",
@@ -4376,7 +4377,7 @@
         "pips": 355.2345277592961,
         "r": 1.9921488252480954,
         "spreadAtFillPips": 3.5000000000007248,
-        "spreadCostPips": -53.634527759296475
+        "spreadCostPips": 1.8000000000006935
       },
       {
         "pair": "GBP/USD",
@@ -4400,7 +4401,7 @@
         "pips": -87.27500029503065,
         "r": -1.0282768776631164,
         "spreadAtFillPips": 3.5000000000007248,
-        "spreadCostPips": 32.775000295031106
+        "spreadCostPips": 1.8000000000006935
       },
       {
         "pair": "GBP/USD",
@@ -4424,7 +4425,7 @@
         "pips": -168.89169114063128,
         "r": -1.008961018254721,
         "spreadAtFillPips": 3.20000000000098,
-        "spreadCostPips": -278.1083088593683
+        "spreadCostPips": 1.600000000001586
       },
       {
         "pair": "GBP/USD",
@@ -4448,7 +4449,7 @@
         "pips": 365.96299252130035,
         "r": 1.9735751471631826,
         "spreadAtFillPips": 9.200000000000319,
-        "spreadCostPips": -180.36299252130127
+        "spreadCostPips": 4.599999999999056
       },
       {
         "pair": "GBP/USD",
@@ -4472,7 +4473,7 @@
         "pips": -174.57630357284424,
         "r": -1.0380553018709187,
         "spreadAtFillPips": 9.00000000000123,
-        "spreadCostPips": -14.623696427156233
+        "spreadCostPips": 4.500000000000597
       },
       {
         "pair": "GBP/USD",
@@ -4496,7 +4497,7 @@
         "pips": -232.17317455297203,
         "r": -1.031545296386837,
         "spreadAtFillPips": 10.000000000001119,
-        "spreadCostPips": 78.97317455297204
+        "spreadCostPips": 5.000000000001677
       },
       {
         "pair": "GBP/USD",
@@ -4520,7 +4521,7 @@
         "pips": 611.2088729091458,
         "r": 1.4076522983041704,
         "spreadAtFillPips": 19.899999999999363,
-        "spreadCostPips": -316.00887290914596
+        "spreadCostPips": 9.899999999998158
       },
       {
         "pair": "GBP/USD",
@@ -4544,7 +4545,7 @@
         "pips": -167.65260285791948,
         "r": -0.9982137817759592,
         "spreadAtFillPips": 3.1999999999987594,
-        "spreadCostPips": -44.347397142081604
+        "spreadCostPips": 1.599999999999369
       },
       {
         "pair": "GBP/USD",
@@ -4568,7 +4569,7 @@
         "pips": -105.80000000000034,
         "r": -0.7311930536591956,
         "spreadAtFillPips": 8.099999999999774,
-        "spreadCostPips": -8.20000000000043
+        "spreadCostPips": 9.500000000000071
       },
       {
         "pair": "GBP/USD",
@@ -4592,7 +4593,7 @@
         "pips": 244.7404904909023,
         "r": 1.9813795706491024,
         "spreadAtFillPips": 4.699999999999704,
-        "spreadCostPips": -5.840490490902624
+        "spreadCostPips": 2.299999999999528
       },
       {
         "pair": "GBP/USD",
@@ -4616,7 +4617,7 @@
         "pips": -59.099999999998595,
         "r": -0.3737238623472662,
         "spreadAtFillPips": 13.999999999998458,
-        "spreadCostPips": 110.29999999999652
+        "spreadCostPips": 9.399999999999409
       },
       {
         "pair": "GBP/USD",
@@ -4640,7 +4641,7 @@
         "pips": 298.8537128384538,
         "r": 1.9402701566864438,
         "spreadAtFillPips": 14.000000000000679,
-        "spreadCostPips": -3.5537128384532934
+        "spreadCostPips": 7.000000000001478
       },
       {
         "pair": "GBP/USD",
@@ -4664,7 +4665,7 @@
         "pips": -164.87054559600088,
         "r": -1.0293437222337682,
         "spreadAtFillPips": 8.900000000000574,
-        "spreadCostPips": 67.57054559600073
+        "spreadCostPips": 4.500000000000597
       },
       {
         "pair": "GBP/USD",
@@ -4688,7 +4689,7 @@
         "pips": -160.68093026174068,
         "r": -1.001246253992132,
         "spreadAtFillPips": 7.800000000000029,
-        "spreadCostPips": 10.580930261741003
+        "spreadCostPips": 3.8999999999989257
       },
       {
         "pair": "GBP/USD",
@@ -4712,7 +4713,7 @@
         "pips": -158.88405710616115,
         "r": -1.0056967773614944,
         "spreadAtFillPips": 5.999999999999339,
-        "spreadCostPips": -157.31594289383867
+        "spreadCostPips": 2.999999999999659
       },
       {
         "pair": "GBP/USD",
@@ -4736,7 +4737,7 @@
         "pips": -172.41865946573398,
         "r": -0.9339178388831011,
         "spreadAtFillPips": 15.000000000000568,
-        "spreadCostPips": 20.618659465734282
+        "spreadCostPips": 7.500000000000284
       },
       {
         "pair": "GBP/USD",
@@ -4760,7 +4761,7 @@
         "pips": 284.21689078378165,
         "r": 1.9874133307647122,
         "spreadAtFillPips": 6.00000000000156,
-        "spreadCostPips": 84.38310921621724
+        "spreadCostPips": 2.999999999999659
       },
       {
         "pair": "GBP/USD",
@@ -4784,7 +4785,7 @@
         "pips": -176.2968532676945,
         "r": -0.986017651013921,
         "spreadAtFillPips": 20.599999999999508,
-        "spreadCostPips": 219.0968532676951
+        "spreadCostPips": 10.299999999998647
       },
       {
         "pair": "GBP/USD",
@@ -4808,7 +4809,7 @@
         "pips": 207.91022720845874,
         "r": 1.9521149752588343,
         "spreadAtFillPips": 8.599999999998609,
-        "spreadCostPips": -2.910227208459105
+        "spreadCostPips": 4.299999999999301
       },
       {
         "pair": "GBP/USD",
@@ -4832,7 +4833,7 @@
         "pips": -137.68745751755017,
         "r": -1.0584222348951255,
         "spreadAtFillPips": 9.600000000000719,
-        "spreadCostPips": 47.78745751754964
+        "spreadCostPips": 4.800000000000352
       },
       {
         "pair": "GBP/USD",
@@ -4856,7 +4857,7 @@
         "pips": 216.80754155879666,
         "r": 1.976299811925067,
         "spreadAtFillPips": 15.400000000000968,
-        "spreadCostPips": 7.192458441203087
+        "spreadCostPips": 7.70000000000158
       },
       {
         "pair": "GBP/USD",
@@ -4880,7 +4881,7 @@
         "pips": -123.8534506058575,
         "r": -0.8221082896394111,
         "spreadAtFillPips": 4.3999999999999595,
-        "spreadCostPips": -85.14654939414389
+        "spreadCostPips": 2.199999999998866
       },
       {
         "pair": "GBP/USD",
@@ -4904,7 +4905,7 @@
         "pips": -126.50640904230848,
         "r": -1.0603488115835211,
         "spreadAtFillPips": 20.000000000000018,
-        "spreadCostPips": -13.993590957692689
+        "spreadCostPips": 10.000000000001123
       }
     ],
     "USD_JPY": [
@@ -4930,7 +4931,7 @@
         "pips": 101.00000000000051,
         "r": 1.7014367231654468,
         "spreadAtFillPips": 2.9999999999986926,
-        "spreadCostPips": 3.0000000000001137
+        "spreadCostPips": 1.5000000000000568
       },
       {
         "pair": "USD/JPY",
@@ -4954,7 +4955,7 @@
         "pips": 32.00000000000074,
         "r": 0.5009474366545686,
         "spreadAtFillPips": 3.999999999999204,
-        "spreadCostPips": 6.999999999999318
+        "spreadCostPips": 1.999999999999602
       },
       {
         "pair": "USD/JPY",
@@ -4978,7 +4979,7 @@
         "pips": -34.00000000000034,
         "r": -0.7174149629309668,
         "spreadAtFillPips": 10.000000000000853,
-        "spreadCostPips": 7.000000000000739
+        "spreadCostPips": 5.000000000001137
       },
       {
         "pair": "USD/JPY",
@@ -5002,7 +5003,7 @@
         "pips": 103.00000000000011,
         "r": 2.1096747321987337,
         "spreadAtFillPips": 9.999999999999432,
-        "spreadCostPips": 7.499999999998863
+        "spreadCostPips": 4.999999999999716
       },
       {
         "pair": "USD/JPY",
@@ -5026,7 +5027,7 @@
         "pips": 159.00000000000034,
         "r": 2.623847613657485,
         "spreadAtFillPips": 9.999999999999432,
-        "spreadCostPips": 6.499999999999773
+        "spreadCostPips": 4.999999999999716
       },
       {
         "pair": "USD/JPY",
@@ -5050,7 +5051,7 @@
         "pips": -3.0000000000001137,
         "r": -0.05462811418802033,
         "spreadAtFillPips": 3.0000000000001137,
-        "spreadCostPips": 3.0000000000001137
+        "spreadCostPips": 1.5000000000000568
       },
       {
         "pair": "USD/JPY",
@@ -5074,7 +5075,7 @@
         "pips": -64.00000000000006,
         "r": -1.2818478484418776,
         "spreadAtFillPips": 10.000000000000853,
-        "spreadCostPips": 6.500000000001194
+        "spreadCostPips": 5.000000000001137
       },
       {
         "pair": "USD/JPY",
@@ -5098,7 +5099,7 @@
         "pips": 197.17417951128482,
         "r": 1.9505376996005463,
         "spreadAtFillPips": 9.999999999999432,
-        "spreadCostPips": -19.67417951128425
+        "spreadCostPips": 4.999999999999716
       },
       {
         "pair": "USD/JPY",
@@ -5122,7 +5123,7 @@
         "pips": -133.7983428137349,
         "r": -1.0388203752530496,
         "spreadAtFillPips": 10.000000000000853,
-        "spreadCostPips": 34.19834281373397
+        "spreadCostPips": 4.999999999999716
       },
       {
         "pair": "USD/JPY",
@@ -5146,7 +5147,7 @@
         "pips": -121.95035854897469,
         "r": -1.0082678547794088,
         "spreadAtFillPips": 2.000000000001023,
-        "spreadCostPips": -97.04964145102508
+        "spreadCostPips": 1.0000000000005116
       },
       {
         "pair": "USD/JPY",
@@ -5170,7 +5171,7 @@
         "pips": -79.50000000000017,
         "r": -0.6046383210453117,
         "spreadAtFillPips": 9.999999999999432,
-        "spreadCostPips": 118.00000000000068
+        "spreadCostPips": 6.000000000000227
       },
       {
         "pair": "USD/JPY",
@@ -5194,7 +5195,7 @@
         "pips": -138.80105141630708,
         "r": -1.0021660485384927,
         "spreadAtFillPips": 2.5000000000005684,
-        "spreadCostPips": 17.80105141630628
+        "spreadCostPips": 1.300000000000523
       },
       {
         "pair": "USD/JPY",
@@ -5218,7 +5219,7 @@
         "pips": 199.87962803607786,
         "r": 1.9910349470331905,
         "spreadAtFillPips": 1.8000000000000682,
-        "spreadCostPips": 2.52037196392223
+        "spreadCostPips": 0.9000000000000341
       },
       {
         "pair": "USD/JPY",
@@ -5242,7 +5243,7 @@
         "pips": -106.80188738466114,
         "r": -0.999064562820671,
         "spreadAtFillPips": 1.8000000000000682,
-        "spreadCostPips": 117.60188738466013
+        "spreadCostPips": 0.9000000000000341
       },
       {
         "pair": "USD/JPY",
@@ -5266,7 +5267,7 @@
         "pips": -120.30673753426555,
         "r": -1.043362600546355,
         "spreadAtFillPips": 10.000000000000853,
-        "spreadCostPips": 31.40673753426597
+        "spreadCostPips": 5.000000000001137
       },
       {
         "pair": "USD/JPY",
@@ -5290,7 +5291,7 @@
         "pips": 296.911783923143,
         "r": 1.9966376584451047,
         "spreadAtFillPips": 1.999999999999602,
-        "spreadCostPips": -42.311783923143764
+        "spreadCostPips": 0.9999999999990905
       },
       {
         "pair": "USD/JPY",
@@ -5314,7 +5315,7 @@
         "pips": 328.3774094992438,
         "r": 1.9682327910184088,
         "spreadAtFillPips": 9.999999999999432,
-        "spreadCostPips": 10.12259050075528
+        "spreadCostPips": 4.999999999999716
       },
       {
         "pair": "USD/JPY",
@@ -5338,7 +5339,7 @@
         "pips": 278.1181290121822,
         "r": 1.941364966824541,
         "spreadAtFillPips": 2.5000000000005684,
-        "spreadCostPips": -73.71812901218249
+        "spreadCostPips": 1.2000000000000455
       },
       {
         "pair": "USD/JPY",
@@ -5362,7 +5363,7 @@
         "pips": -121.60335812848331,
         "r": -1.0167219385082127,
         "spreadAtFillPips": 1.8000000000000682,
-        "spreadCostPips": 15.503358128482603
+        "spreadCostPips": 0.9000000000000341
       },
       {
         "pair": "USD/JPY",
@@ -5386,7 +5387,7 @@
         "pips": -117.69668351068105,
         "r": -1.0172865802139854,
         "spreadAtFillPips": 1.7999999999986471,
-        "spreadCostPips": -13.503316489318706
+        "spreadCostPips": 0.899999999998613
       },
       {
         "pair": "USD/JPY",
@@ -5410,7 +5411,7 @@
         "pips": -82.139653147199,
         "r": -1.0073583830301247,
         "spreadAtFillPips": 1.8000000000000682,
-        "spreadCostPips": -89.86034685280089
+        "spreadCostPips": 0.9000000000000341
       },
       {
         "pair": "USD/JPY",
@@ -5434,7 +5435,7 @@
         "pips": -75.31569171780461,
         "r": -1.0711078832882301,
         "spreadAtFillPips": 10.000000000000853,
-        "spreadCostPips": -0.48430828219494515
+        "spreadCostPips": 5.000000000001137
       },
       {
         "pair": "USD/JPY",
@@ -5458,7 +5459,7 @@
         "pips": -88.66474539288873,
         "r": -1.0079577334859906,
         "spreadAtFillPips": 1.8000000000000682,
-        "spreadCostPips": 29.164745392888847
+        "spreadCostPips": 0.9000000000000341
       },
       {
         "pair": "USD/JPY",
@@ -5482,7 +5483,7 @@
         "pips": -57.28785461575541,
         "r": -1.023219321563976,
         "spreadAtFillPips": 1.8000000000000682,
-        "spreadCostPips": 32.28785461575541
+        "spreadCostPips": 0.9000000000000341
       },
       {
         "pair": "USD/JPY",
@@ -5506,7 +5507,7 @@
         "pips": -224.4058632131086,
         "r": -1.0167643937779156,
         "spreadAtFillPips": 7.099999999999795,
-        "spreadCostPips": 16.20586321310782
+        "spreadCostPips": 3.499999999999659
       },
       {
         "pair": "USD/JPY",
@@ -5530,7 +5531,7 @@
         "pips": -146.44180905971922,
         "r": -1.0089567575905412,
         "spreadAtFillPips": 2.5000000000005684,
-        "spreadCostPips": 146.44180905971922
+        "spreadCostPips": 1.2000000000000455
       },
       {
         "pair": "USD/JPY",
@@ -5554,7 +5555,7 @@
         "pips": 226.52614901408583,
         "r": 1.993838737284093,
         "spreadAtFillPips": 1.6999999999995907,
-        "spreadCostPips": -22.42614901408615
+        "spreadCostPips": 0.7999999999995566
       },
       {
         "pair": "USD/JPY",
@@ -5578,7 +5579,7 @@
         "pips": -110.769039597389,
         "r": -1.0063596448425587,
         "spreadAtFillPips": 2.200000000000557,
-        "spreadCostPips": 18.96903959738836
+        "spreadCostPips": 1.099999999999568
       },
       {
         "pair": "USD/JPY",
@@ -5602,7 +5603,7 @@
         "pips": -106.79186985119173,
         "r": -1.0210341396815197,
         "spreadAtFillPips": 3.100000000000591,
-        "spreadCostPips": -100.10813014880853
+        "spreadCostPips": 1.6000000000005343
       },
       {
         "pair": "USD/JPY",
@@ -5626,7 +5627,7 @@
         "pips": -30.89999999999975,
         "r": -0.46102955029337367,
         "spreadAtFillPips": 3.900000000000148,
-        "spreadCostPips": -7.1000000000012164
+        "spreadCostPips": 3.09999999999917
       },
       {
         "pair": "USD/JPY",
@@ -5650,7 +5651,7 @@
         "pips": -59.0330486699159,
         "r": -1.038709871307047,
         "spreadAtFillPips": 4.299999999999216,
-        "spreadCostPips": 7.733048669915377
+        "spreadCostPips": 2.0999999999986585
       },
       {
         "pair": "USD/JPY",
@@ -5674,7 +5675,7 @@
         "pips": -130.17797004847864,
         "r": -1.0349822786796878,
         "spreadAtFillPips": 4.7000000000011255,
-        "spreadCostPips": 34.977970048478824
+        "spreadCostPips": 2.400000000000091
       },
       {
         "pair": "USD/JPY",
@@ -5698,7 +5699,7 @@
         "pips": -149.5846848934832,
         "r": -1.123981208004557,
         "spreadAtFillPips": 8.399999999998897,
-        "spreadCostPips": -23.815315106517687
+        "spreadCostPips": 4.199999999998738
       },
       {
         "pair": "USD/JPY",
@@ -5722,7 +5723,7 @@
         "pips": -168.09236078098735,
         "r": -1.0108243096167875,
         "spreadAtFillPips": 4.900000000000659,
-        "spreadCostPips": 38.49236078098812
+        "spreadCostPips": 2.400000000000091
       },
       {
         "pair": "USD/JPY",
@@ -5746,7 +5747,7 @@
         "pips": -132.78351099883565,
         "r": -1.0168474563378835,
         "spreadAtFillPips": 4.600000000000648,
-        "spreadCostPips": 57.88351099883613
+        "spreadCostPips": 2.3000000000010346
       },
       {
         "pair": "USD/JPY",
@@ -5770,7 +5771,7 @@
         "pips": -97.68829215462489,
         "r": -0.7753759534634536,
         "spreadAtFillPips": 5.400000000000205,
-        "spreadCostPips": -127.81170784537466
+        "spreadCostPips": 2.7000000000001023
       },
       {
         "pair": "USD/JPY",
@@ -5794,7 +5795,7 @@
         "pips": -124.32880859719404,
         "r": -1.0874670183543238,
         "spreadAtFillPips": 7.299999999999329,
-        "spreadCostPips": 7.928808597193893
+        "spreadCostPips": 3.5999999999987153
       },
       {
         "pair": "USD/JPY",
@@ -5818,7 +5819,7 @@
         "pips": -79.00000000000063,
         "r": -0.9320676174639893,
         "spreadAtFillPips": 9.100000000000819,
-        "spreadCostPips": 31.799999999999784
+        "spreadCostPips": 6.400000000000716
       },
       {
         "pair": "USD/JPY",
@@ -5842,7 +5843,7 @@
         "pips": -143.90000000000072,
         "r": -0.5332188527695668,
         "spreadAtFillPips": 10.000000000000853,
-        "spreadCostPips": -59.39999999999941
+        "spreadCostPips": 7.1000000000012164
       },
       {
         "pair": "USD/JPY",
@@ -5866,7 +5867,7 @@
         "pips": 223.33669288690885,
         "r": 2.000000000000001,
         "spreadAtFillPips": 3.0000000000001137,
-        "spreadCostPips": -0.5366928869094068
+        "spreadCostPips": 1.5000000000000568
       },
       {
         "pair": "USD/JPY",
@@ -5890,7 +5891,7 @@
         "pips": -98.55595514390671,
         "r": -1.1282110645067105,
         "spreadAtFillPips": 5.100000000000193,
-        "spreadCostPips": -7.84404485609258
+        "spreadCostPips": 2.600000000001046
       },
       {
         "pair": "USD/JPY",
@@ -5914,7 +5915,7 @@
         "pips": -34.30000000000035,
         "r": -0.4557974537033574,
         "spreadAtFillPips": 4.5000000000001705,
-        "spreadCostPips": 17.39999999999924
+        "spreadCostPips": 7.30000000000075
       },
       {
         "pair": "USD/JPY",
@@ -5938,7 +5939,7 @@
         "pips": -72.06249101122353,
         "r": -0.9986142385247593,
         "spreadAtFillPips": 5.5999999999997385,
-        "spreadCostPips": 14.6624910112223
+        "spreadCostPips": 2.7999999999991587
       },
       {
         "pair": "USD/JPY",
@@ -5962,7 +5963,7 @@
         "pips": 157.90556391310417,
         "r": 1.9849156752223347,
         "spreadAtFillPips": 9.300000000000352,
-        "spreadCostPips": 73.89443608689561
+        "spreadCostPips": 4.599999999999227
       },
       {
         "pair": "USD/JPY",
@@ -5986,7 +5987,7 @@
         "pips": -279.6551688438541,
         "r": -1.0491455485812486,
         "spreadAtFillPips": 9.999999999999432,
-        "spreadCostPips": -79.94483115614628
+        "spreadCostPips": 4.999999999998295
       },
       {
         "pair": "USD/JPY",
@@ -6010,7 +6011,7 @@
         "pips": -208.82684003719874,
         "r": -1.019528690669997,
         "spreadAtFillPips": 9.999999999999432,
-        "spreadCostPips": 153.526840037199
+        "spreadCostPips": 4.999999999998295
       },
       {
         "pair": "USD/JPY",
@@ -6034,7 +6035,7 @@
         "pips": -203.68618296568286,
         "r": -1.0510872336122723,
         "spreadAtFillPips": 9.999999999999432,
-        "spreadCostPips": 71.28618296568447
+        "spreadCostPips": 5.000000000001137
       },
       {
         "pair": "USD/JPY",
@@ -6058,7 +6059,7 @@
         "pips": 315.29992407366194,
         "r": 1.9867674826569133,
         "spreadAtFillPips": 9.399999999999409,
-        "spreadCostPips": 35.60007592633667
+        "spreadCostPips": 4.699999999999704
       }
     ],
     "AUD_USD": [
@@ -6084,7 +6085,7 @@
         "pips": 119.00000000000021,
         "r": 2.521592545427295,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": 5.999999999999332
+        "spreadCostPips": 0.9999999999998863
       },
       {
         "pair": "AUD/USD",
@@ -6108,7 +6109,7 @@
         "pips": -2.00000000000089,
         "r": -0.03187042316158096,
         "spreadAtFillPips": 2.00000000000089,
-        "spreadCostPips": 2.00000000000089
+        "spreadCostPips": 0.9999999999998899
       },
       {
         "pair": "AUD/USD",
@@ -6132,7 +6133,7 @@
         "pips": -108.99999999999909,
         "r": -2.1883188657597357,
         "spreadAtFillPips": 2.9999999999996696,
-        "spreadCostPips": 6.499999999999275
+        "spreadCostPips": 1.4999999999998295
       },
       {
         "pair": "AUD/USD",
@@ -6156,7 +6157,7 @@
         "pips": 78.00000000000028,
         "r": 1.7340949657420663,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": 5.999999999999346
+        "spreadCostPips": 0.9999999999998863
       },
       {
         "pair": "AUD/USD",
@@ -6180,7 +6181,7 @@
         "pips": 197.8481374107932,
         "r": 2.020423987957615,
         "spreadAtFillPips": 10.000000000000009,
-        "spreadCostPips": -9.848137410792845
+        "spreadCostPips": 4.999999999999432
       },
       {
         "pair": "AUD/USD",
@@ -6204,7 +6205,7 @@
         "pips": -71.94916606252043,
         "r": -1.0212919482775475,
         "spreadAtFillPips": 2.9999999999996696,
-        "spreadCostPips": 71.94916606252043
+        "spreadCostPips": 1.4999999999998295
       },
       {
         "pair": "AUD/USD",
@@ -6228,7 +6229,7 @@
         "pips": -69.00000000000017,
         "r": -0.883551455011598,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": -16.000000000000455
+        "spreadCostPips": 5.999999999999339
       },
       {
         "pair": "AUD/USD",
@@ -6252,7 +6253,7 @@
         "pips": -80.88744411931746,
         "r": -1.0125176116350187,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": -32.112555880682294
+        "spreadCostPips": 0.9999999999998863
       },
       {
         "pair": "AUD/USD",
@@ -6276,7 +6277,7 @@
         "pips": -82.20801974871073,
         "r": -1.024935162422236,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": -11.791980251288905
+        "spreadCostPips": 0.9999999999999005
       },
       {
         "pair": "AUD/USD",
@@ -6300,7 +6301,7 @@
         "pips": -82.63590534594245,
         "r": -1.0122495119734642,
         "spreadAtFillPips": 2.00000000000089,
-        "spreadCostPips": -3.864094654056899
+        "spreadCostPips": 0.9999999999998863
       },
       {
         "pair": "AUD/USD",
@@ -6324,7 +6325,7 @@
         "pips": -77.01959535876823,
         "r": -1.0266597012478504,
         "spreadAtFillPips": 10.000000000000009,
-        "spreadCostPips": 5.019595358768385
+        "spreadCostPips": 4.999999999999446
       },
       {
         "pair": "AUD/USD",
@@ -6348,7 +6349,7 @@
         "pips": -89.48145939479123,
         "r": -1.0346895163540806,
         "spreadAtFillPips": 10.000000000000009,
-        "spreadCostPips": 20.48145939479106
+        "spreadCostPips": 5.000000000000554
       },
       {
         "pair": "AUD/USD",
@@ -6372,7 +6373,7 @@
         "pips": 114.19676246622878,
         "r": 1.9826384009656044,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": -13.196762466228805
+        "spreadCostPips": 0.9999999999998863
       },
       {
         "pair": "AUD/USD",
@@ -6396,7 +6397,7 @@
         "pips": -70.11174731688662,
         "r": -1.0605036194373798,
         "spreadAtFillPips": 8.00000000000023,
-        "spreadCostPips": 31.11174731688648
+        "spreadCostPips": 4.000000000000668
       },
       {
         "pair": "AUD/USD",
@@ -6420,7 +6421,7 @@
         "pips": 145.38482023333077,
         "r": 1.9999999999999958,
         "spreadAtFillPips": 1.9999999999997797,
-        "spreadCostPips": 71.61517976666974
+        "spreadCostPips": 0.9999999999998863
       },
       {
         "pair": "AUD/USD",
@@ -6444,7 +6445,7 @@
         "pips": 313.7544306408935,
         "r": 1.9936458400413064,
         "spreadAtFillPips": 2.9999999999996696,
-        "spreadCostPips": -37.05443064089263
+        "spreadCostPips": 1.4999999999998295
       },
       {
         "pair": "AUD/USD",
@@ -6468,7 +6469,7 @@
         "pips": -123.81815947152818,
         "r": -1.0429588870203421,
         "spreadAtFillPips": 10.000000000000009,
-        "spreadCostPips": -75.68184052847205
+        "spreadCostPips": 5.000000000000554
       },
       {
         "pair": "AUD/USD",
@@ -6492,7 +6493,7 @@
         "pips": 316.3526736379096,
         "r": 1.9893099468050035,
         "spreadAtFillPips": 2.9999999999996696,
-        "spreadCostPips": -18.252673637909595
+        "spreadCostPips": 1.4999999999998295
       },
       {
         "pair": "AUD/USD",
@@ -6516,7 +6517,7 @@
         "pips": -238.44210390843722,
         "r": -1.01188242658489,
         "spreadAtFillPips": 5.0000000000005596,
-        "spreadCostPips": 103.04210390843727
+        "spreadCostPips": 2.5000000000008242
       },
       {
         "pair": "AUD/USD",
@@ -6540,7 +6541,7 @@
         "pips": -135.5728817123314,
         "r": -1.0694154765683115,
         "spreadAtFillPips": 10.000000000000009,
-        "spreadCostPips": -54.82711828766915
+        "spreadCostPips": 5.000000000000568
       },
       {
         "pair": "AUD/USD",
@@ -6564,7 +6565,7 @@
         "pips": 273.7166089113885,
         "r": 2.014721220083041,
         "spreadAtFillPips": 2.4999999999997247,
-        "spreadCostPips": -68.21660891138782
+        "spreadCostPips": 1.2000000000000455
       },
       {
         "pair": "AUD/USD",
@@ -6588,7 +6589,7 @@
         "pips": -191.5862562378845,
         "r": -1.0295561859924203,
         "spreadAtFillPips": 10.000000000000009,
-        "spreadCostPips": 63.48625623788462
+        "spreadCostPips": 5.000000000000568
       },
       {
         "pair": "AUD/USD",
@@ -6612,7 +6613,7 @@
         "pips": 296.60925761753055,
         "r": 1.9892692801505767,
         "spreadAtFillPips": 2.500000000000835,
-        "spreadCostPips": 7.290742382470853
+        "spreadCostPips": 1.1999999999989654
       },
       {
         "pair": "AUD/USD",
@@ -6636,7 +6637,7 @@
         "pips": -133.01964433458434,
         "r": -1.0390565059447636,
         "spreadAtFillPips": 9.999999999998899,
-        "spreadCostPips": 14.019644334584129
+        "spreadCostPips": 4.999999999999432
       },
       {
         "pair": "AUD/USD",
@@ -6660,7 +6661,7 @@
         "pips": -208.24191600849917,
         "r": -1.0043406563290516,
         "spreadAtFillPips": 2.4999999999997247,
-        "spreadCostPips": -68.05808399150123
+        "spreadCostPips": 1.3000000000007503
       },
       {
         "pair": "AUD/USD",
@@ -6684,7 +6685,7 @@
         "pips": -111.8544904150509,
         "r": -1.021926921325011,
         "spreadAtFillPips": 3.9999999999995595,
-        "spreadCostPips": -64.5455095849501
+        "spreadCostPips": 1.9999999999997726
       },
       {
         "pair": "AUD/USD",
@@ -6708,7 +6709,7 @@
         "pips": 156.17876310088928,
         "r": 1.9872756346942648,
         "spreadAtFillPips": 2.500000000000835,
-        "spreadCostPips": -62.77876310088803
+        "spreadCostPips": 1.2000000000012108
       },
       {
         "pair": "AUD/USD",
@@ -6732,7 +6733,7 @@
         "pips": 266.4506316532145,
         "r": 1.9850996811765085,
         "spreadAtFillPips": 3.6000000000002697,
-        "spreadCostPips": -23.850631653213895
+        "spreadCostPips": 1.8000000000006935
       },
       {
         "pair": "AUD/USD",
@@ -6756,7 +6757,7 @@
         "pips": -156.05420014345282,
         "r": -1.0833019793109073,
         "spreadAtFillPips": 10.999999999999899,
-        "spreadCostPips": -10.245799856547507
+        "spreadCostPips": 5.499999999999375
       },
       {
         "pair": "AUD/USD",
@@ -6780,7 +6781,7 @@
         "pips": -126.54815591447765,
         "r": -1.0209765121620153,
         "spreadAtFillPips": 4.099999999999104,
-        "spreadCostPips": -4.451844085522353
+        "spreadCostPips": 1.9999999999997726
       },
       {
         "pair": "AUD/USD",
@@ -6804,7 +6805,7 @@
         "pips": -131.27449810910073,
         "r": -1.0379523150655905,
         "spreadAtFillPips": 10.999999999999899,
-        "spreadCostPips": 131.27449810910073
+        "spreadCostPips": 5.499999999999389
       },
       {
         "pair": "AUD/USD",
@@ -6828,7 +6829,7 @@
         "pips": 177.57997626115738,
         "r": 1.958099013150943,
         "spreadAtFillPips": 5.399999999999849,
-        "spreadCostPips": -75.07997626115757
+        "spreadCostPips": 2.699999999999932
       },
       {
         "pair": "AUD/USD",
@@ -6852,7 +6853,7 @@
         "pips": -99.07720514672924,
         "r": -1.0344549623779902,
         "spreadAtFillPips": 7.899999999999574,
-        "spreadCostPips": 70.6772051467297
+        "spreadCostPips": 3.90000000000002
       },
       {
         "pair": "AUD/USD",
@@ -6876,7 +6877,7 @@
         "pips": 148.638817504092,
         "r": 1.9323967762575582,
         "spreadAtFillPips": 6.800000000000139,
-        "spreadCostPips": 14.16118249590761
+        "spreadCostPips": 3.400000000000091
       },
       {
         "pair": "AUD/USD",
@@ -6900,7 +6901,7 @@
         "pips": 123.0205071249768,
         "r": 1.9870780693993866,
         "spreadAtFillPips": 2.4000000000001798,
-        "spreadCostPips": -50.02050712497707
+        "spreadCostPips": 1.200000000000088
       },
       {
         "pair": "AUD/USD",
@@ -6924,7 +6925,7 @@
         "pips": -60.25513480234057,
         "r": -1.0050037415642534,
         "spreadAtFillPips": 2.60000000000038,
-        "spreadCostPips": -0.44486519765962385
+        "spreadCostPips": 1.3000000000007503
       },
       {
         "pair": "AUD/USD",
@@ -6948,7 +6949,7 @@
         "pips": 125.23737499784414,
         "r": 1.9873053528762656,
         "spreadAtFillPips": 2.1999999999999797,
-        "spreadCostPips": 23.962625002155193
+        "spreadCostPips": 1.09999999999944
       },
       {
         "pair": "AUD/USD",
@@ -6972,7 +6973,7 @@
         "pips": 214.40714914296777,
         "r": 1.7904029162401578,
         "spreadAtFillPips": 13.600000000000279,
-        "spreadCostPips": 41.29285085703205
+        "spreadCostPips": 6.800000000000125
       },
       {
         "pair": "AUD/USD",
@@ -6996,7 +6997,7 @@
         "pips": -113.68365774396149,
         "r": -1.0686195620155292,
         "spreadAtFillPips": 11.099999999999444,
-        "spreadCostPips": -29.616342256039147
+        "spreadCostPips": 5.499999999999389
       },
       {
         "pair": "AUD/USD",
@@ -7020,7 +7021,7 @@
         "pips": 178.97194690418172,
         "r": 1.9594902220871293,
         "spreadAtFillPips": 5.800000000000249,
-        "spreadCostPips": -30.97194690418138
+        "spreadCostPips": 2.9000000000001194
       },
       {
         "pair": "AUD/USD",
@@ -7044,7 +7045,7 @@
         "pips": -141.1786859984898,
         "r": -1.1162251163818626,
         "spreadAtFillPips": 12.900000000000134,
-        "spreadCostPips": 128.47868599848988
+        "spreadCostPips": 6.39999999999975
       },
       {
         "pair": "AUD/USD",
@@ -7068,7 +7069,7 @@
         "pips": -109.03403522834253,
         "r": -1.0987564395365983,
         "spreadAtFillPips": 8.900000000000574,
-        "spreadCostPips": 12.03403522834212
+        "spreadCostPips": 4.4000000000010715
       },
       {
         "pair": "AUD/USD",
@@ -7092,7 +7093,7 @@
         "pips": 232.9254943440906,
         "r": 1.9555043425172225,
         "spreadAtFillPips": 9.400000000000519,
-        "spreadCostPips": 15.87450565590953
+        "spreadCostPips": 4.700000000000813
       },
       {
         "pair": "AUD/USD",
@@ -7116,7 +7117,7 @@
         "pips": -87.05429190633772,
         "r": -1.0369248543416802,
         "spreadAtFillPips": 3.3000000000005247,
-        "spreadCostPips": 51.954291906337595
+        "spreadCostPips": 1.7000000000000313
       },
       {
         "pair": "AUD/USD",
@@ -7140,7 +7141,7 @@
         "pips": -92.824824089357,
         "r": -1.0462102916751952,
         "spreadAtFillPips": 9.199999999999209,
-        "spreadCostPips": 50.324824089357236
+        "spreadCostPips": 4.600000000000165
       },
       {
         "pair": "AUD/USD",
@@ -7164,7 +7165,7 @@
         "pips": 142.8657423625268,
         "r": 2.019792777765411,
         "spreadAtFillPips": 7.499999999999174,
-        "spreadCostPips": -11.665742362527709
+        "spreadCostPips": 3.699999999999818
       },
       {
         "pair": "AUD/USD",
@@ -7188,7 +7189,7 @@
         "pips": 125.23365367872685,
         "r": 1.9608560480656347,
         "spreadAtFillPips": 3.1000000000003247,
-        "spreadCostPips": -27.9336536787267
+        "spreadCostPips": 1.6000000000004775
       },
       {
         "pair": "AUD/USD",
@@ -7212,7 +7213,7 @@
         "pips": 127.41317892507874,
         "r": 1.9071947834805125,
         "spreadAtFillPips": 11.200000000000099,
-        "spreadCostPips": 4.986821074920442
+        "spreadCostPips": 5.600000000000051
       }
     ]
   }

@@ -35,6 +35,13 @@
  *   used as a headline fill. The trigger-close variant is reported separately and
  *   labelled as an optimistic upper bound.
  *
+ *   zeroCost — identical timing to the headline, MID prices on both sides: the mid OPEN
+ *   of the bar after the trigger for the entry, the mid OPEN of the bar after the cross
+ *   for a rule exit, and the same stop/target level (a level is basis-independent).
+ *   CORRECTED 2026-11-02: this variant used to take the mid CLOSE of those bars instead
+ *   of the mid OPEN, which re-timed every trade by one bar and produced a zero-cost
+ *   figure that was not the spread-removed counterpart of the headline. It is now.
+ *
  * Intra-bar ambiguity is resolved pessimistically: if a bar's range touches both the
  * stop and the target, the STOP is taken. If a bar opens beyond the stop, the fill is
  * that bar's OPEN — worse than the stop.
@@ -175,7 +182,10 @@ function replay(s: Series, variant: Variant): Trade[] {
     } else {
       fillIdx = i + 1;
       if (fillIdx >= bars.length) break; // no bar left to fill on
-      fillPrice = mid ? closes[fillIdx]! : side === "long" ? ask[fillIdx]![0]! : bid[fillIdx]![0]!;
+      // Same instant in every variant: the OPEN of the bar after the trigger.
+      // (Until 2026-11-02 the mid variants took this bar's CLOSE instead, which
+      // re-timed the trade by one bar; see the file header.)
+      fillPrice = mid ? bars[fillIdx]!.o : side === "long" ? ask[fillIdx]![0]! : bid[fillIdx]![0]!;
       scanFrom = fillIdx; // we are in the market from this bar's open
     }
     const spreadAtFillPips = (ask[fillIdx]![0]! - bid[fillIdx]![0]!) / cfg.pip;
@@ -217,7 +227,8 @@ function replay(s: Series, variant: Variant): Trade[] {
             break;
           }
           exitIdx = j + 1;
-          exitPrice = mid ? closes[j + 1]! : side === "long" ? bid[j + 1]![0]! : ask[j + 1]![0]!;
+          // Same instant in every variant: the OPEN of the bar after the cross.
+          exitPrice = mid ? bars[j + 1]!.o : side === "long" ? bid[j + 1]![0]! : ask[j + 1]![0]!;
         }
         break;
       }
@@ -227,10 +238,13 @@ function replay(s: Series, variant: Variant): Trade[] {
     const grossPips = openTrade
       ? null
       : (side === "long" ? exitPrice! - fillPrice : fillPrice - exitPrice!) / cfg.pip;
+    // The spread crossed on this trade's own fills, in pips: the same two instants
+    // priced at MID, minus what the bid/ask fills produced. A stop/target level is the
+    // same price on either basis, so it contributes nothing on the exit leg.
     let spreadCostPips: number | null = null;
     if (!openTrade) {
-      const midEntry = mid ? fillPrice : closes[fillIdx]!;
-      const midExit = mid ? exitPrice! : closes[exitIdx!]!;
+      const midEntry = mid ? fillPrice : bars[fillIdx]!.o;
+      const midExit = mid ? exitPrice! : exitReason === "stop" || exitReason === "target" ? exitPrice! : bars[exitIdx!]!.o;
       const midGross = (side === "long" ? midExit - midEntry : midEntry - midExit) / cfg.pip;
       spreadCostPips = midGross - grossPips!;
     }
@@ -513,8 +527,11 @@ async function main(): Promise<void> {
         grossEdgeR: z.avgRPerTrade,
         spreadPaidR: round(z.avgRPerTrade - h.avgRPerTrade, 4),
         netR: h.avgRPerTrade,
-        spreadPaidAsPctOfRisk: round(((z.avgRPerTrade - h.avgRPerTrade) / meanRisk) * 100, 2),
-        note: "spread paid as a fraction of the trade's initial risk (1R = 1.5 x ATR(14)). This is the number that decides whether lower frequency improved the cost-to-edge ratio.",
+        // (zero-cost R per trade) minus (achievable R per trade), expressed as a
+        // percentage of 1R. This used to divide that R difference by meanRiskPips as
+        // well, which double-counted the risk and understated it ~100-fold.
+        spreadPaidAsPctOfRisk: round((z.avgRPerTrade - h.avgRPerTrade) * 100, 2),
+        note: "spread paid as a percentage of the trade's initial risk (1R = 1.5 x ATR(14)). This is the number that decides whether lower frequency improved the cost-to-edge ratio.",
       };
     })(),
     costAsMultipleOfGrossEdge:
@@ -525,7 +542,7 @@ async function main(): Promise<void> {
       "spreadPaid = zero-cost expectancy (mid fills, same timing) minus headline expectancy (next-bar open at ask/bid). Both from the stored results; nothing typed by hand. The zero-cost replay fills at mid and can exit on a mid high/low rather than a bid/ask one, so a handful of trades may exit on a different bar; the subtraction is therefore a whole-book cost measure, not a per-trade ledger.",
     crossCheck: {
       meanSpreadAtEntryFillPips: meanSpreadAtFill,
-      note: "one full spread per round trip (enter at ask / exit at bid, or the reverse) should equal the spread-paid figure above if the two runs took the same trades",
+      note: "one full spread per round trip (enter at ask / exit at bid, or the reverse) is the per-trade cost the headline should pay; the spreadPaid figure above is a whole-book subtraction between two separate replays, and it comes out smaller than one full spread because the mid series touches a given stop or target on a different bar than the bid/ask series does, which moves some exits. The two are a decomposition and its cross-check, not the same quantity.",
     },
   };
 
@@ -596,7 +613,7 @@ async function main(): Promise<void> {
     assumptions: {
       fillHeadline: "entry at the NEXT bar's open, ASK for a long / BID for a short; exits at the opposite side. No look-ahead.",
       fillOptimistic: "entry at the trigger bar's CLOSE (mid), exits at the exit bar's close (mid) — labelled OPTIMISTIC UPPER BOUND, not achievable.",
-      fillZeroCost: "same timing as headline (next-bar open) but at MID on both sides, so the spread drag is visible.",
+      fillZeroCost: "same timing as headline (mid OPEN of the bar after the trigger; a rule exit at the mid OPEN of the bar after the cross) at MID on both sides, so the spread drag is visible. CORRECTED 2026-11-02: this variant used to price those legs at the bars' CLOSES, which re-timed every trade by one bar; the pre-fix figure (−2,055.1 pips, PF 0.87) was not the spread-removed counterpart of the headline and is superseded by the stored one.",
       intraBarAmbiguity: "if a bar touches both stop and target, the STOP is counted first.",
       gaps: "a bar opening beyond the stop fills at that bar's open (worse than the stop); a bar opening beyond the target fills at that bar's open (better than the target).",
       ruleExit: "an exit the rules trigger at a bar's close is filled at the NEXT bar's open, same no-look-ahead rule as entries.",
@@ -639,7 +656,11 @@ async function main(): Promise<void> {
     costEdgeDecomposition: costEdge,
     results: {
       headline_nextBarOpen_bidAsk: { fullPeriod: summaryFor("headline", inFull), last12MonthsHeldOut: summaryFor("headline", inHoldout) },
-      zeroCost_mid_nextBarOpen: { fullPeriod: summaryFor("zeroCost", inFull), last12MonthsHeldOut: summaryFor("zeroCost", inHoldout) },
+      zeroCost_mid_nextBarOpen: {
+        convention: "mid OPEN on both sides, same bar instants as the headline; spread removed, timing held",
+        fullPeriod: summaryFor("zeroCost", inFull),
+        last12MonthsHeldOut: summaryFor("zeroCost", inHoldout),
+      },
       optimisticUpperBound_triggerClose: {
         label: "OPTIMISTIC UPPER BOUND — fills at the trigger bar's close, which is only knowable after that bar has ended. NOT achievable in practice.",
         fullPeriod: summaryFor("triggerClose", inFull),

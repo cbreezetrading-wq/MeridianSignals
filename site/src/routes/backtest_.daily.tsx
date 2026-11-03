@@ -294,6 +294,17 @@ function DailyBacktestPage() {
           at mid still loses {pips(gross.totalPips)}. The cheap-cost argument was the reason to try
           this, and the gross figure is what answers it.
         </p>
+        <p className="mt-3 rounded-lg border border-slate-300 bg-slate-50 p-3 text-xs text-slate-700">
+          <strong className="font-semibold">This zero-cost figure was corrected on 2026-11-02.</strong>{" "}
+          The variant had been priced at the <em>close</em> of the bar after the trigger — and, for a
+          rule exit, at the close of the bar after the cross — instead of that bar&rsquo;s{" "}
+          <em>open</em>, which re-timed every trade by one bar and made it not the spread-removed
+          counterpart of the headline. It now uses the same bar instants as the achievable row, at
+          mid: {pips(gross.totalPips)}, profit factor {num(gross.profitFactor, 2)}. The superseded
+          figure, −2,055.1 pips / PF 0.87, is named here rather than deleted. The conclusion is
+          unchanged and stronger than it was reported to be — the gross tendency is more negative,
+          not less.
+        </p>
       </section>
 
       {/* ── hypothesis and outcome ──────────────────────────────────────── */}
