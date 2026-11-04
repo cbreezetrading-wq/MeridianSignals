@@ -132,7 +132,13 @@ function broker(overrides: Partial<ReportBrokerState> = {}): ReportBrokerState {
   };
 }
 
-const config = parseConfig({ mode: "automatic", automaticAcknowledged: true, acknowledgedBy: "test acknowledgement", report: { intervalHours: 6 } });
+/**
+ * The config as a COMPLETE report may state it: read from a file, with the path it came from.
+ * `modeSource` is "CONFIG" because that is what the file says; a defaulted config is refused
+ * by buildReport and produces an UNAVAILABLE report from generateReport.
+ */
+const parsed = parseConfig({ mode: "automatic", automaticAcknowledged: true, acknowledgedBy: "test acknowledgement", report: { intervalHours: 6 } });
+const config = { ...parsed, modeSource: "CONFIG" as const, configPath: join(dir, "config.json") };
 
 const noNotification = {
   transport: "none",
@@ -486,7 +492,7 @@ test("generateReport writes both files, appends REPORT_GENERATED, and sends noth
 const OPERATOR_KEY = "k".repeat(48);
 
 test("the console report endpoint refuses every request without the operator key", async () => {
-  const deps = { operatorKey: OPERATOR_KEY, readLatest: async () => null, generate: async () => ({ reportId: "r", generatedAt: at(0), text: "t", json: {}, notification: {}, recordSeq: 1 }) };
+  const deps = { operatorKey: OPERATOR_KEY, readLatest: async () => ({ found: false as const, path: "/nowhere/latest.json", reason: "NOT_GENERATED_YET" as const, detail: "no report has been written there yet" }), generate: async () => ({ reportId: "r", generatedAt: at(0), text: "t", json: {}, notification: {}, recordSeq: 1 }) };
 
   for (const authorization of [null, "", "Bearer ", "Bearer wrong", `Bearer ${"k".repeat(47)}`, `Basic ${OPERATOR_KEY}`, OPERATOR_KEY]) {
     for (const action of ["report", "generate-report"] as const) {
@@ -511,7 +517,7 @@ test("the console report endpoint serves the report to the operator key only", a
   const report = buildReport({ records: ledger(), broker: broker(), config, chain: goodChain, notification: noNotification, generatedAt: at(10), trigger: "CONSOLE" });
   const deps = {
     operatorKey: OPERATOR_KEY,
-    readLatest: async () => ({ reportId: report.reportId, generatedAt: report.generatedAt, jsonPath: "j", textPath: "t", text: renderReportText(report), json: report }),
+    readLatest: async () => ({ found: true as const, report: { reportId: report.reportId, generatedAt: report.generatedAt, jsonPath: "j", textPath: "t", text: renderReportText(report), json: report } }),
     generate: async () => ({ reportId: "rpt-new", generatedAt: at(11), text: "fresh text", json: report, notification: noNotification, recordSeq: 42 }),
   };
 
@@ -529,12 +535,28 @@ test("the console report endpoint serves the report to the operator key only", a
   assert.equal(generatedBody.notification.delivered, false);
   assert.equal(generatedBody.notification.detail, NO_TRANSPORT_DETAIL);
 
-  // With no report yet, the answer is an honest "none yet", not a fabricated one.
-  const none = await handleReportAction({ action: "report", authorization: `Bearer ${OPERATOR_KEY}`, deps: { ...deps, readLatest: async () => null } });
+  // With no report yet, the answer names the path it looked in — the failure this replaced
+  // answered "no report has been generated yet" for every failure, including reading the
+  // wrong directory while the watcher's real reports sat in the right one.
+  const none = await handleReportAction({
+    action: "report",
+    authorization: `Bearer ${OPERATOR_KEY}`,
+    deps: { ...deps, readLatest: async () => ({ found: false as const, path: join(dir, "reports", "latest.json"), reason: "NOT_GENERATED_YET" as const, detail: "no report has been written there yet" }) },
+  });
   assert.equal(none.status, 200);
   const noneBody = await none.json();
   assert.equal(noneBody.report, null);
-  assert.match(String(noneBody.note), /No report has been generated yet/);
+  assert.match(String(noneBody.note), /No report has been written at/);
+  assert.ok(String(noneBody.note).includes(join(dir, "reports", "latest.json")), "the note must name the directory searched");
+
+  // An unreadable report is not "none yet": it is reported as unreadable, with the path.
+  const unreadable = await handleReportAction({
+    action: "report",
+    authorization: `Bearer ${OPERATOR_KEY}`,
+    deps: { ...deps, readLatest: async () => ({ found: false as const, path: "/x/latest.json", reason: "UNREADABLE" as const, detail: "the report file is not valid JSON (unexpected token)" }) },
+  });
+  const unreadableBody = await unreadable.json();
+  assert.match(String(unreadableBody.note), /could not be read/);
 
   // A generation failure is a 503 that claims nothing.
   const failed = await handleReportAction({
