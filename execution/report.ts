@@ -1054,6 +1054,41 @@ function listOrNone(ids: number[]): string {
   return ids.length ? ids.join(", ") : "none";
 }
 
+/* ------------------------------------------------------- the notification subject */
+
+/** "2026-11-04 20:41 UTC" — the stamp a subject line carries. */
+export function subjectStamp(at: string): string {
+  const date = new Date(at);
+  if (!Number.isFinite(date.getTime())) return at;
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
+}
+
+/**
+ * The subject line: what happened first, then when.
+ *
+ *     Meridian: 2 fills, 1 refusal — 2026-11-04 20:41 UTC
+ *
+ * A quiet window still sends a message, and the subject says so plainly ("nothing happened"):
+ * the owner must hear "nothing happened" as reliably as "something did", or the silence
+ * becomes the ambiguous thing. The counts are the report's own, so the subject cannot drift
+ * away from the body it belongs to.
+ */
+export function reportSubject(report: ReportComplete): string {
+  const counts = report.counts;
+  const parts: string[] = [];
+  const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+  const fills = counts.brokerConfirmedFills + counts.partialFills;
+  if (fills > 0) parts.push(plural(fills, "fill", "fills"));
+  if (counts.closes > 0) parts.push(plural(counts.closes, "close", "closes"));
+  if (counts.refusals > 0) parts.push(plural(counts.refusals, "refusal", "refusals"));
+  if (counts.errors > 0) parts.push(plural(counts.errors, "error", "errors"));
+  if (parts.length === 0 && counts.orderRequests > 0) {
+    parts.push(`${plural(counts.orderRequests, "order request", "order requests")} (not a fill)`);
+  }
+  return `Meridian: ${parts.length ? parts.join(", ") : "nothing happened"} — ${subjectStamp(report.generatedAt)}`;
+}
+
 /* --------------------------------------------------------- the unavailable report */
 
 /**
@@ -1458,12 +1493,20 @@ export async function generateReport(options: GenerateReportOptions): Promise<Ge
       triggerDetail: options.triggerDetail ?? null,
       fromSeq: options.fromSeq ?? state.lastSeqSeen,
       windowBasis: options.fromSeq !== undefined ? "EXPLICIT" : state.lastSeqSeen > 0 ? "PREVIOUS_REPORT" : "RECORD_START",
+      // The draft is rendered BEFORE delivery, so its notification line must not pretend the
+      // send already failed. When a transport is configured the line says the report is being
+      // handed over now and where the outcome is recorded; when it is not, the line is the
+      // exact sentence for that case (or the transport's own list of missing settings).
       notification: {
         transport: resolved.transport.id,
         transportDescription: resolved.transport.describe(),
         configured: false,
         delivered: false,
-        detail: resolved.problem ?? NO_TRANSPORT_DETAIL,
+        detail:
+          resolved.problem ??
+          (resolved.transport.configured()
+            ? "this report is handed to the transport immediately after it is written; the delivery outcome is recorded in the stored copy and in the record"
+            : (resolved.transport.unconfiguredDetail?.() ?? NO_TRANSPORT_DETAIL)),
         attemptedAt: now.toISOString(),
       },
       recordPath: recordFile,
@@ -1474,7 +1517,8 @@ export async function generateReport(options: GenerateReportOptions): Promise<Ge
       {
         reportId: draft.reportId,
         generatedAt: draft.generatedAt,
-        subject: `Meridian execution report ${draft.reportId}: ${draft.counts.orderRequests} order request(s), ${draft.counts.brokerConfirmedFills} fill(s), ${draft.counts.refusals} refusal(s), ${draft.counts.errors} error(s)`,
+        // What happened first, then when — the one line the owner sees in a list of mail.
+        subject: reportSubject(draft),
         text,
         json: draft,
       },

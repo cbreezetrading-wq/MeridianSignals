@@ -50,7 +50,9 @@
   "report": {
     "intervalHours": 6,
     "transport": "none",
-    "note": "A plain-language execution report is generated every 6 hours and immediately after any fill, close, refusal or error, and written to execution/reports/. 6 hours is the team's default, not an owner instruction. transport is \"none\": with no channel configured the report records the exact sentence 'no notification channel configured — report generated, nothing sent' and nothing is sent anywhere. Choosing a channel is the owner's decision; when one is chosen it is registered in execution/notify.ts and its name goes here."
+    "note": "A plain-language execution report is generated every 6 hours and immediately after any fill, close, refusal or error, and written to execution/reports/. 6 hours is the team's default, not an owner instruction. The owner chose EMAIL as the notification channel on 2026-11-04 (push and SMS were considered and declined; there is no SMS capability here). The transport is BUILT and registered in execution/notify.ts and implemented in execution/emailTransport.ts. It needs MERIDIAN_SMTP_USER, MERIDIAN_SMTP_PASS and MERIDIAN_ALERT_TO; until all three are saved in the platform secret store it sends nothing, opens no connection, and names whichever of the three is missing. transport stays \"none\" here on purpose: the console serves a compiled bundle, so this value and a site rebuild must change together, or the console and the watcher would describe the channel differently. The address itself is never written here, in code, or in any record."
+
+
   },
   "ownerSettings": {},
   "strategies": [

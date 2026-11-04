@@ -11,28 +11,35 @@
  *     no notification channel configured — report generated, nothing sent
  *
  * in the report and in the log, and returns delivered:false. It never claims a message was
- * delivered, because none was. There is no email provider here, no API key, no outbound
- * request of any kind: the owner has not chosen a channel, and choosing one for them — or
- * silently wiring something that "looks delivered" in a report — would be a lie in the one
- * document the owner is meant to trust when they are not watching.
+ * delivered, because none was. A channel that "looks delivered" in a report would be a lie in
+ * the one document the owner is meant to trust when they are not watching.
  *
- * HOW A CHANNEL IS ADDED LATER (the whole point of the seam):
+ * THE CHANNEL THE OWNER CHOSE: EMAIL (2026-11-04; push and SMS were considered and declined,
+ * and there is no SMS capability here). `./emailTransport.ts` is that channel — a real SMTP
+ * client — and it is registered below under the name "email". It is inert until all three
+ * secrets exist: with any of MERIDIAN_SMTP_USER, MERIDIAN_SMTP_PASS, MERIDIAN_ALERT_TO
+ * missing, `configured()` is false, nothing connects anywhere, and the report carries the
+ * missing VARIABLE NAMES rather than a claim of delivery.
+ *
+ * HOW ANOTHER CHANNEL IS ADDED (the rest of the seam):
  *
  *     import { registerTransport } from "./notify.ts";
- *     registerTransport("email", () => ({
- *       id: "email",
- *       describe: () => "email to the address in MERIDIAN_NOTIFY_EMAIL",
- *       configured: () => Boolean(process.env.MERIDIAN_NOTIFY_EMAIL),
- *       send: async (payload) => ({ delivered: true, detail: "accepted by the mail relay" }),
+ *     registerTransport("push", () => ({
+ *       id: "push",
+ *       describe: () => "push to the device registered out of band",
+ *       configured: () => Boolean(process.env.SOMETHING),
+ *       unconfiguredDetail: () => "push is not configured: SOMETHING is not set; nothing was sent",
+ *       send: async (payload) => ({ delivered: true, detail: "accepted by the push service" }),
  *     }));
  *
- * and set `"transport": "email"` under `report` in config.json. `send` must return
+ * and set `"transport": "push"` under `report` in config.json. `send` must return
  * delivered:true only after the channel has actually accepted the message. Anything else —
  * a timeout, a refusal, an unconfigured address — must come back delivered:false with a
  * truthful detail, and the report will say nothing was delivered.
  */
 
 import { redact } from "./lib/client.ts";
+import { createEmailTransport } from "./emailTransport.ts";
 
 /** The exact sentence recorded when no channel is configured. Asserted by the tests. */
 export const NO_TRANSPORT_DETAIL = "no notification channel configured — report generated, nothing sent";
@@ -48,6 +55,27 @@ export type NotificationPayload = {
   json: unknown;
 };
 
+/** One recorded attempt. The email transport fills this in; a transport may omit it. */
+export type NotificationAttempt = {
+  attempt: number;
+  endpoint: string;
+  stage: string;
+  ok: boolean;
+  smtpCode: number | null;
+  detail: string;
+  at: string;
+};
+
+export type NotificationSendOutcome = {
+  delivered: boolean;
+  detail: string;
+  configured?: boolean;
+  stage?: string | null;
+  smtpCode?: number | null;
+  messageId?: string | null;
+  attempts?: NotificationAttempt[];
+};
+
 export type NotificationTransport = {
   /** Short stable id, stored in the report. */
   id: string;
@@ -59,8 +87,14 @@ export type NotificationTransport = {
    * sent, rather than reporting a failure as an attempt.
    */
   configured: () => boolean;
+  /**
+   * What to record when the transport is not configured. A transport that needs named
+   * settings should name them here (variable NAMES only, never values) instead of leaving
+   * the report to say the generic sentence. Optional: the default is NO_TRANSPORT_DETAIL.
+   */
+  unconfiguredDetail?: () => string;
   /** Deliver. `delivered:true` only when the channel actually accepted the message. */
-  send: (payload: NotificationPayload) => Promise<{ delivered: boolean; detail: string }>;
+  send: (payload: NotificationPayload) => Promise<NotificationSendOutcome>;
 };
 
 export type NotificationResult = {
@@ -75,6 +109,17 @@ export type NotificationResult = {
   /** The sentence the report carries. With no channel: NO_TRANSPORT_DETAIL, verbatim. */
   detail: string;
   attemptedAt: string;
+  /** The stage the last attempt reached. Present only when a transport reports attempts. */
+  stage?: string | null;
+  /** The final SMTP code, when there was one. */
+  smtpCode?: number | null;
+  /** The server's message-id, when it gave one. */
+  messageId?: string | null;
+  /**
+   * One entry per attempt, in order. Present only when a transport reports attempts: a
+   * flapping mailbox must be visible in the report, not silently retried.
+   */
+  attempts?: NotificationAttempt[];
 };
 
 const noneTransport: NotificationTransport = {
@@ -84,7 +129,12 @@ const noneTransport: NotificationTransport = {
   send: async () => ({ delivered: false, detail: NO_TRANSPORT_DETAIL }),
 };
 
-const registry = new Map<string, () => NotificationTransport>([["none", () => noneTransport]]);
+const registry = new Map<string, () => NotificationTransport>([
+  ["none", () => noneTransport],
+  // The channel the owner chose on 2026-11-04. Registered unconditionally: it reports itself
+  // unconfigured (and connects nowhere) until its three secrets exist.
+  ["email", () => createEmailTransport()],
+]);
 
 /** Register a transport under a config name. Later channels plug in here and nowhere else. */
 export function registerTransport(id: string, factory: () => NotificationTransport): void {
@@ -137,8 +187,11 @@ export async function deliverReport(
   const base = { transport: transport.id, transportDescription: transport.describe(), attemptedAt };
 
   if (!transport.configured()) {
-    log(redact(NO_TRANSPORT_DETAIL));
-    return { ...base, configured: false, delivered: false, detail: NO_TRANSPORT_DETAIL };
+    // A transport that knows what it is missing names the settings here (variable names
+    // only). The default stays the exact sentence the tests assert.
+    const unconfigured = redact(transport.unconfiguredDetail?.() ?? NO_TRANSPORT_DETAIL);
+    log(unconfigured);
+    return { ...base, configured: false, delivered: false, detail: unconfigured };
   }
 
   try {
@@ -146,7 +199,16 @@ export async function deliverReport(
     const delivered = result.delivered === true;
     const detail = redact(result.detail);
     if (!delivered) log(`notification NOT delivered by ${transport.id}: ${detail}`);
-    return { ...base, configured: true, delivered, detail };
+    return {
+      ...base,
+      configured: true,
+      delivered,
+      detail,
+      ...(result.stage !== undefined ? { stage: result.stage } : {}),
+      ...(result.smtpCode !== undefined ? { smtpCode: result.smtpCode } : {}),
+      ...(result.messageId !== undefined ? { messageId: result.messageId } : {}),
+      ...(result.attempts !== undefined ? { attempts: result.attempts.map((attempt) => ({ ...attempt, detail: redact(attempt.detail) })) } : {}),
+    };
   } catch (error) {
     // A thrown transport is a failed delivery, never a delivered one.
     const detail = redact(`transport ${transport.id} threw: ${error instanceof Error ? error.message : String(error)}; nothing was delivered`);
