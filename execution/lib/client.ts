@@ -172,6 +172,16 @@ export function createClient(options: ClientOptions = {}) {
     openPositions: () => send("GET", `/v3/accounts/${accountId()}/openPositions`, undefined),
     /** GET open trades (a trade is one filled order, and carries its attached stops). */
     openTrades: () => send("GET", `/v3/accounts/${accountId()}/openTrades`, undefined),
+    /**
+     * GET CLOSED trades — the broker's own record of realised P/L and financing.
+     *
+     * Read-only, same host assertion as everything else. It exists because the report
+     * must state closes with BROKER-CONFIRMED P/L: the append-only record can be missing
+     * a close (it was, for trade 43), and the broker's history is the authority on what a
+     * trade actually made. A trade the record never closed is reported as a gap, not
+     * quietly counted.
+     */
+    closedTrades: () => send("GET", `/v3/accounts/${accountId()}/trades?state=CLOSED&count=500`, undefined),
     /** GET orders by state: PENDING | FILLED | CANCELLED | ALL. */
     orders: (state: "PENDING" | "FILLED" | "CANCELLED" | "ALL" = "ALL") =>
       send("GET", `/v3/accounts/${accountId()}/orders?state=${state}&count=500`, undefined),
