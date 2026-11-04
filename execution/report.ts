@@ -37,15 +37,15 @@
  * `REPORT_GENERATED` entry, so the report itself is auditable from the record.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { appendRecord, readRecords, recordPath, verifyChain, type ExecutionRecord, type VerifyResult } from "./lib/record.ts";
 import { withLedgerLock } from "./lib/ledgerLock.ts";
-import { reportsDir, reportStatePath } from "./lib/paths.ts";
+import { configPath, reportsDir, reportStatePath } from "./lib/paths.ts";
 import { redact, type Client } from "./lib/client.ts";
 import { MERIDIAN_TAG } from "./lib/engine.ts";
 import { readBrokerState } from "./lib/ops.ts";
-import type { ExecutionConfig } from "./lib/config.ts";
+import { DEFAULT_REPORT_TRANSPORT, readConfigForReport, type ExecutionConfig } from "./lib/config.ts";
 import { resolveTransport, deliverReport, NO_TRANSPORT_DETAIL, type NotificationResult, type NotificationTransport } from "./notify.ts";
 
 /* ------------------------------------------------------------------ trigger events */
@@ -192,11 +192,39 @@ export type ReportOpenPosition = {
   source: "BROKER_OPEN_TRADES";
 };
 
-export type ReportJson = {
+export type ReportJson = ReportComplete | ReportUnavailable;
+
+/**
+ * What is produced when the report CANNOT BE BUILT.
+ *
+ * It is a report about the failure, not a report with holes in it: it carries the absolute
+ * path that was looked for and the reason it could not be read, and it carries NO counts, NO
+ * account figures and NO mode — the fields do not exist, so nothing downstream can print a
+ * zero or a default where a measurement should be. That shape is the fix for 2026-11-04, when
+ * a console report printed `signals-only (source: DEFAULT)`, "0 record(s) from seq 0 to 0" and
+ * 0 fills because it had resolved the execution directory from the bundle's own location.
+ */
+export type ReportUnavailable = {
   reportId: string;
   generatedAt: string;
   trigger: ReportTrigger;
   triggerDetail: string | null;
+  status: "UNAVAILABLE";
+  /** Every source that could not be read, with the exact path that was looked for. */
+  unavailable: Array<{ source: "RECORD" | "CONFIG"; path: string; reason: string }>;
+  /** The last complete report, if there is one, so a reader can go and look at it. */
+  previousReportId: string | null;
+  /** What the report did and did not do: no record was read, nothing was appended, nothing sent. */
+  statement: string;
+  notification: NotificationResult;
+};
+
+export type ReportComplete = {
+  reportId: string;
+  generatedAt: string;
+  trigger: ReportTrigger;
+  triggerDetail: string | null;
+  status: "OK";
   window: ReportWindow;
   ledger: {
     path: string;
@@ -214,8 +242,14 @@ export type ReportJson = {
     };
   };
   mode: {
+    /**
+     * The mode as stated by the config file that was read. There is no default here: a
+     * report that cannot read the config is an UNAVAILABLE report and has no mode at all.
+     */
     current: string;
-    source: string;
+    source: "CONFIG";
+    /** The config file the mode was read from, so a reader can check it. */
+    configPath: string;
     automaticAcknowledged: boolean;
     acknowledgedBy: string | null;
     note: string;
@@ -326,10 +360,21 @@ export type ReportJson = {
   };
 };
 
+/**
+ * The config facts a complete report may state. `modeSource` is pinned to "CONFIG" so a
+ * defaulted config cannot be handed to the builder at all: a value that did not come from a
+ * file does not describe the system, and the type says so.
+ */
+export type ReportConfigFacts = Pick<ExecutionConfig, "mode" | "automaticAcknowledged" | "acknowledgedBy"> & {
+  modeSource: "CONFIG";
+  /** The file the facts were read from. */
+  configPath: string;
+};
+
 export type BuildReportInput = {
   records: LedgerLike[];
   broker: ReportBrokerState | null;
-  config: Pick<ExecutionConfig, "mode" | "modeSource" | "automaticAcknowledged" | "acknowledgedBy">;
+  config: ReportConfigFacts;
   chain: Pick<VerifyResult, "ok" | "recordCount" | "firstBreak">;
   notification: NotificationResult;
   generatedAt: string;
@@ -388,7 +433,16 @@ export function newReportId(at: Date): string {
  * Build the report from stored records and a broker read. Pure: no I/O, no clock, no
  * environment. `generateReport` supplies the inputs; the tests supply their own.
  */
-export function buildReport(input: BuildReportInput): ReportJson {
+export function buildReport(input: BuildReportInput): ReportComplete {
+  // Fail closed even at the type boundary: a config that did not come from a file cannot
+  // produce a mode. Callers that could not read the config build an UNAVAILABLE report
+  // instead (buildUnavailableReport), never a complete one with a defaulted mode.
+  if (input.config?.modeSource !== "CONFIG") {
+    throw new Error(
+      "REFUSED: buildReport was given a config that did not come from a config file (modeSource is not CONFIG), " +
+        "so any mode it printed would be an invention. Build an unavailable report instead.",
+    );
+  }
   const records = [...input.records].sort((a, b) => a.seq - b.seq);
   const fromSeq = input.fromSeq ?? 0;
   const toSeq = records.length ? records[records.length - 1]!.seq : 0;
@@ -679,7 +733,7 @@ export function buildReport(input: BuildReportInput): ReportJson {
   const financingUnmeasured = confirmedCloses.length - measuredFinancing.length;
 
   /* ---- account ---- */
-  const account: ReportJson["account"] = brokerOk && broker!.account
+  const account: ReportComplete["account"] = brokerOk && broker!.account
     ? {
         measured: true,
         readAt: broker!.readAt,
@@ -748,6 +802,7 @@ export function buildReport(input: BuildReportInput): ReportJson {
     generatedAt: input.generatedAt,
     trigger: input.trigger,
     triggerDetail: input.triggerDetail ?? null,
+    status: "OK",
     window: {
       fromSeq,
       toSeq,
@@ -777,7 +832,8 @@ export function buildReport(input: BuildReportInput): ReportJson {
     },
     mode: {
       current: input.config.mode,
-      source: input.config.modeSource,
+      source: "CONFIG",
+      configPath: input.config.configPath,
       automaticAcknowledged: input.config.automaticAcknowledged,
       acknowledgedBy: input.config.acknowledgedBy,
       note:
@@ -873,6 +929,7 @@ export function buildReport(input: BuildReportInput): ReportJson {
 
 /** The short human-readable version. Plain sentences; no figure that is not in the JSON. */
 export function renderReportText(report: ReportJson): string {
+  if (report.status === "UNAVAILABLE") return renderUnavailableText(report);
   const lines: string[] = [];
   const add = (s = "") => lines.push(s);
   const acct = report.account;
@@ -884,7 +941,7 @@ export function renderReportText(report: ReportJson): string {
   add(`Built from the append-only record (${report.ledger.path}), records ${report.ledger.firstSeqInWindow ?? "–"}–${report.ledger.lastSeqInWindow ?? "–"} of ${report.ledger.recordsTotal}.`);
   add();
   add("## What the system is doing");
-  add(`Execution mode: ${report.mode.current} (source: ${report.mode.source}). ${report.mode.note}`);
+  add(`Execution mode: ${report.mode.current} (source: ${report.mode.source}, read from ${report.mode.configPath}). ${report.mode.note}`);
   if (report.mode.automaticAcknowledged) add(`Automatic acknowledged by: ${report.mode.acknowledgedBy ?? "a named acknowledgement"}.`);
   add();
   add("## Account (live broker read)");
@@ -997,6 +1054,77 @@ function listOrNone(ids: number[]): string {
   return ids.length ? ids.join(", ") : "none";
 }
 
+/* --------------------------------------------------------- the unavailable report */
+
+/**
+ * The report produced when a source it needs cannot be read.
+ *
+ * It deliberately has no `mode`, no `counts`, no `account` and no P&L, so nothing can print
+ * "0" or "signals-only" where a measurement should be. What it does have is the absolute path
+ * that was looked for, the reason the read failed, and a plain statement of what was not done.
+ */
+export function buildUnavailableReport(input: {
+  generatedAt: string;
+  trigger: ReportTrigger;
+  triggerDetail?: string | null;
+  unavailable: Array<{ source: "RECORD" | "CONFIG"; path: string; reason: string }>;
+  previousReportId?: string | null;
+  notification: NotificationResult;
+}): ReportUnavailable {
+  return {
+    reportId: newReportId(new Date(input.generatedAt)),
+    generatedAt: input.generatedAt,
+    trigger: input.trigger,
+    triggerDetail: input.triggerDetail ?? null,
+    status: "UNAVAILABLE",
+    unavailable: input.unavailable,
+    previousReportId: input.previousReportId ?? null,
+    statement:
+      "This report could not be built, so it states no execution mode, no record count, no fill count and no P&L. " +
+      "Those figures would have had to be invented, and a report that misstates the execution mode is worse than no " +
+      "report. Nothing was appended to the record, the report scheduler's window was NOT advanced, and nothing was sent.",
+    notification: input.notification,
+  };
+}
+
+function renderUnavailableText(report: ReportUnavailable): string {
+  const lines: string[] = [];
+  const add = (s = "") => lines.push(s);
+  add(`# Meridian execution report ${report.reportId} — UNAVAILABLE`);
+  add();
+  add(`Generated ${report.generatedAt} · trigger: ${report.trigger}${report.triggerDetail ? ` (${report.triggerDetail})` : ""}`);
+  add();
+  add("## This report could not be built");
+  for (const u of report.unavailable) {
+    add(`  · ${u.source === "RECORD" ? "the append-only record" : "the execution config"} at ${u.path} — ${u.reason}`);
+  }
+  add();
+  add(report.statement);
+  // Say what is unknown, and never a value in its place. The word for the setting is
+  // deliberately not printed with any value beside it: there is no default to fall back to.
+  const recordGone = report.unavailable.some((u) => u.source === "RECORD");
+  const configGone = report.unavailable.some((u) => u.source === "CONFIG");
+  if (configGone) {
+    add(
+      "Because no config file could be read, what the system is set to do is UNKNOWN here. No default is printed in its place: " +
+        "a default would be a claim about this account that nothing supports.",
+    );
+  }
+  if (recordGone) {
+    add("Because no record could be read, no count, no fill and no P&L is stated anywhere in this document.");
+  }
+  if (report.previousReportId) add(`The most recent complete report is ${report.previousReportId}, in the same directory as this file.`);
+  add();
+  add("## Notification");
+  add(
+    report.notification.delivered
+      ? `Delivered by ${report.notification.transport} at ${report.notification.attemptedAt}: ${report.notification.detail}`
+      : `${report.notification.detail} (transport: ${report.notification.transportDescription})`,
+  );
+  add();
+  return lines.join("\n");
+}
+
 /* ------------------------------------------------------------------- generation */
 
 export type ReportState = {
@@ -1032,29 +1160,92 @@ export type LatestReport = {
   json: ReportJson;
 };
 
-/** Read the most recent report, or null when none has been generated yet. */
+/**
+ * Read the most recent report, or null when none has been generated yet.
+ *
+ * Kept for callers that only need "is there one". It says nothing about WHY there is none;
+ * anything that shows the answer to a reader uses `readLatestReportResult`, which
+ * distinguishes "the reports directory holds no report yet" from "it could not be read" and
+ * names the path either way.
+ */
 export async function readLatestReport(dir = reportsDir()): Promise<LatestReport | null> {
+  const result = await readLatestReportResult(dir);
+  return result.found ? result.report : null;
+}
+
+/** The outcome of looking for the newest report, with the path that was looked in. */
+export type LatestReportResult =
+  | { found: true; report: LatestReport }
+  | { found: false; path: string; reason: "NOT_GENERATED_YET" | "UNREADABLE"; detail: string };
+
+/**
+ * Look for the newest report in a directory and say exactly what happened.
+ *
+ * The console's "show latest report" used to answer "no report has been generated yet" for
+ * every failure, including reading the wrong directory — while the watcher's real reports sat
+ * in the right one. A reader is now told which directory was searched and, when the answer is
+ * not simply "nothing there", what was wrong with it.
+ */
+export async function readLatestReportResult(dir = reportsDir()): Promise<LatestReportResult> {
+  const jsonPath = resolve(dir, "latest.json");
+  const textPath = resolve(dir, "latest.md");
+  let jsonText: string;
   try {
-    const jsonText = await readFile(resolve(dir, "latest.json"), "utf8");
-    const text = await readFile(resolve(dir, "latest.md"), "utf8");
-    const json = JSON.parse(jsonText) as ReportJson;
+    jsonText = await readFile(jsonPath, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
     return {
-      reportId: json.reportId,
-      generatedAt: json.generatedAt,
-      jsonPath: resolve(dir, "latest.json"),
-      textPath: resolve(dir, "latest.md"),
-      text,
-      json,
+      found: false,
+      path: jsonPath,
+      reason: code === "ENOENT" ? "NOT_GENERATED_YET" : "UNREADABLE",
+      detail:
+        code === "ENOENT"
+          ? "no report has been written there yet"
+          : `the report file could not be read (${error instanceof Error ? error.message : String(error)})`,
     };
-  } catch {
-    return null;
   }
+  let json: ReportJson;
+  try {
+    json = JSON.parse(jsonText) as ReportJson;
+  } catch (error) {
+    return {
+      found: false,
+      path: jsonPath,
+      reason: "UNREADABLE",
+      detail: `the report file is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+    };
+  }
+  let text: string;
+  try {
+    text = await readFile(textPath, "utf8");
+  } catch (error) {
+    return {
+      found: false,
+      path: textPath,
+      reason: "UNREADABLE",
+      detail: `the report's text file is missing or unreadable (${error instanceof Error ? error.message : String(error)})`,
+    };
+  }
+  return {
+    found: true,
+    report: { reportId: json.reportId, generatedAt: json.generatedAt, jsonPath, textPath, text, json },
+  };
 }
 
 export type GenerateReportOptions = {
   /** The live client. When null, the broker sections are labelled unmeasured rather than guessed. */
   client?: Client | null;
-  config: Pick<ExecutionConfig, "mode" | "modeSource" | "automaticAcknowledged" | "acknowledgedBy" | "reportTransport">;
+  /**
+   * The config, ONLY as read from a config file. Omitted entirely: `generateReport` reads it
+   * itself with `readConfigForReport()` and produces an UNAVAILABLE report if it cannot.
+   * A config carrying `modeSource: "DEFAULT"` is refused for the same reason: it did not come
+   * from a file, so it does not describe the system.
+   */
+  config?: Pick<ExecutionConfig, "mode" | "modeSource" | "automaticAcknowledged" | "acknowledgedBy" | "reportTransport"> | null;
+  /** A config read the caller already attempted and that FAILED, with its path and reason. */
+  configUnavailable?: { path: string; reason: string } | null;
+  /** The config file the facts came from. Defaults to the one absolute config path. */
+  configPath?: string;
   trigger: ReportTrigger;
   triggerDetail?: string | null;
   now?: Date;
@@ -1079,6 +1270,11 @@ export type GenerateReportResult = {
  * that nothing was sent) and append a REPORT_GENERATED record naming what it was built
  * from.
  *
+ * FAILS CLOSED. If the config cannot be read, or the record cannot be read, the result is an
+ * UNAVAILABLE report that names both paths and states no mode, no count and no P&L. In that
+ * case nothing is appended to the record and the scheduler's window is NOT advanced, so the
+ * next complete report still covers everything since the last complete one.
+ *
  * Runs under its own lock so two generators — the watcher and the console — cannot write
  * half-updated state files over each other. The lock is a DIFFERENT file from the ledger's:
  * nesting the ledger lock inside it would deadlock the append that follows.
@@ -1089,9 +1285,118 @@ export async function generateReport(options: GenerateReportOptions): Promise<Ge
   await mkdir(dir, { recursive: true });
 
   return withLedgerLock(resolve(dir, ".report.lock"), async () => {
-    const records = await readRecords();
-    const chain = await verifyChain();
+    /* ---- the two inputs that must be readable, or the report says why it is not ---- */
+    const unavailable: Array<{ source: "RECORD" | "CONFIG"; path: string; reason: string }> = [];
+
+    let configFacts: ReportConfigFacts | null = null;
+    let transportName = DEFAULT_REPORT_TRANSPORT;
+    const lookedForConfigPath = options.configPath ?? configPath();
+    if (options.configUnavailable) {
+      unavailable.push({ source: "CONFIG", path: options.configUnavailable.path, reason: options.configUnavailable.reason });
+    } else if (options.config) {
+      if (options.config.modeSource !== "CONFIG") {
+        unavailable.push({
+          source: "CONFIG",
+          path: lookedForConfigPath,
+          reason:
+            "the config supplied did not come from a config file (modeSource is \"DEFAULT\"), so it does not describe this " +
+            "account's execution setting; no mode is printed in its place",
+        });
+      } else {
+        configFacts = {
+          mode: options.config.mode,
+          modeSource: "CONFIG",
+          configPath: lookedForConfigPath,
+          automaticAcknowledged: options.config.automaticAcknowledged,
+          acknowledgedBy: options.config.acknowledgedBy,
+        };
+        transportName = options.config.reportTransport;
+      }
+    } else {
+      const read = await readConfigForReport(lookedForConfigPath);
+      if (read.ok) {
+        configFacts = {
+          mode: read.config.mode,
+          modeSource: "CONFIG",
+          configPath: read.path,
+          automaticAcknowledged: read.config.automaticAcknowledged,
+          acknowledgedBy: read.config.acknowledgedBy,
+        };
+        transportName = read.config.reportTransport;
+      } else {
+        unavailable.push({ source: "CONFIG", path: read.path, reason: read.reason });
+      }
+    }
+
+    const recordFile = recordPath();
+    let records: ExecutionRecord[] | null = null;
+    let chain: VerifyResult | null = null;
+    try {
+      // readRecords() returns [] for a missing file, which is indistinguishable from an empty
+      // record. A report must never present "I could not find it" as "there are none", so the
+      // file is checked for existence first and its absence is a named failure.
+      const info = await stat(recordFile);
+      if (!info.isFile()) {
+        unavailable.push({ source: "RECORD", path: recordFile, reason: "the path exists but is not a regular file" });
+      } else {
+        records = await readRecords(recordFile);
+        chain = await verifyChain(recordFile);
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      unavailable.push({
+        source: "RECORD",
+        path: recordFile,
+        reason:
+          code === "ENOENT"
+            ? "the record file does not exist at that path"
+            : `the record could not be read (${error instanceof Error ? error.message : String(error)})`,
+      });
+    }
+
     const state = await readReportState(dir);
+    const previous = await readLatestReportResult(dir);
+    const previousReportId = previous.found ? previous.report.reportId : null;
+
+    const resolvedTransport = resolveTransport(transportName);
+    const notSent = (detail: string): NotificationResult => ({
+      transport: resolvedTransport.transport.id,
+      transportDescription: resolvedTransport.transport.describe(),
+      configured: false,
+      delivered: false,
+      detail,
+      attemptedAt: now.toISOString(),
+    });
+
+    if (unavailable.length > 0 || records === null || chain === null || configFacts === null) {
+      const report = buildUnavailableReport({
+        generatedAt: now.toISOString(),
+        trigger: options.trigger,
+        triggerDetail: options.triggerDetail ?? null,
+        unavailable,
+        previousReportId,
+        notification: notSent(
+          "this report could not be built, so it is written to the reports directory only and nothing was sent anywhere",
+        ),
+      });
+      const text = scrubAccountIds(redact(renderReportText(report)));
+      const jsonBody = scrubAccountIds(JSON.stringify(report, null, 2));
+      const jsonPath = resolve(dir, `${report.reportId}.json`);
+      const textPath = resolve(dir, `${report.reportId}.md`);
+      const writeAtomic = async (path: string, body: string) => {
+        const tmp = `${path}.tmp-${process.pid}`;
+        await writeFile(tmp, body, { encoding: "utf8", mode: 0o600 });
+        await rename(tmp, path);
+      };
+      await writeAtomic(jsonPath, jsonBody);
+      await writeAtomic(textPath, text);
+      await writeAtomic(resolve(dir, "latest.json"), jsonBody);
+      await writeAtomic(resolve(dir, "latest.md"), text);
+      // No REPORT_GENERATED append (the record may be exactly what could not be read) and no
+      // state.json update (the window must not move past records no report has covered).
+      for (const u of unavailable) options.log?.(`report UNAVAILABLE: ${u.source} at ${u.path} — ${u.reason}`);
+      return { report, text, files: { json: jsonPath, text: textPath }, notification: report.notification, recordSeq: null };
+    }
 
     let broker: ReportBrokerState | null = null;
     if (options.client) {
@@ -1142,11 +1447,11 @@ export async function generateReport(options: GenerateReportOptions): Promise<Ge
     }
 
     // Delivery first, so its outcome is inside the report and in the record entry.
-    const resolved = resolveTransport(options.config.reportTransport);
+    const resolved = resolvedTransport;
     const draft = buildReport({
       records: records as LedgerLike[],
       broker,
-      config: options.config,
+      config: configFacts,
       chain,
       generatedAt: now.toISOString(),
       trigger: options.trigger,
@@ -1161,7 +1466,7 @@ export async function generateReport(options: GenerateReportOptions): Promise<Ge
         detail: resolved.problem ?? NO_TRANSPORT_DETAIL,
         attemptedAt: now.toISOString(),
       },
-      recordPath: recordPath(),
+      recordPath: recordFile,
     });
 
     const text = scrubAccountIds(redact(renderReportText(draft)));
@@ -1177,7 +1482,7 @@ export async function generateReport(options: GenerateReportOptions): Promise<Ge
     );
     if (resolved.problem) options.log?.(resolved.problem);
 
-    const report: ReportJson = { ...draft, notification };
+    const report: ReportComplete = { ...draft, notification };
 
     // Write both files atomically: a reader never sees a half-written report.
     const jsonPath = resolve(dir, `${report.reportId}.json`);

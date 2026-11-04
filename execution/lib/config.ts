@@ -442,9 +442,17 @@ export function resolveSettings(config: ExecutionConfig): ResolvedSettings {
 }
 
 /**
- * Read the config from disk. A missing or unreadable file is NOT an error that
- * falls through to something permissive: it yields the default config, which is
+ * Read the config from disk FOR THE ORDER PATH. A missing or unreadable file is NOT an
+ * error that falls through to something permissive: it yields the default config, which is
  * signals-only with every setting UNSET, so nothing can trade.
+ *
+ * THIS FUNCTION MUST NEVER BE USED TO STATE THE MODE. Its fallback is a safe thing to
+ * *trade* on (it permits nothing) and a false thing to *report*: the resulting config
+ * carries `modeSource: "DEFAULT"`, which means "no config file was read", not "the mode is
+ * signals-only". On 2026-11-04 a console report printed exactly that fallback as
+ * `signals-only (source: DEFAULT)` while the real config said `automatic`. Anything that
+ * describes the system to a reader — the report, the console's status — uses
+ * `readConfigForReport()` below, which refuses rather than defaulting.
  */
 export async function loadConfigFromDisk(path: string = configPath()): Promise<ExecutionConfig> {
   const { readFile } = await import("node:fs/promises");
@@ -457,6 +465,59 @@ export async function loadConfigFromDisk(path: string = configPath()): Promise<E
     return cfg;
   }
   return parseConfig(raw);
+}
+
+/**
+ * The result of trying to read the config file, with no invented middle ground: either the
+ * file was read and parsed, or it was not and the reason and the exact path are carried.
+ */
+export type ConfigRead =
+  | { ok: true; config: ExecutionConfig; path: string }
+  | { ok: false; path: string; reason: string };
+
+/**
+ * Read the config file for REPORTING purposes — a report, a status line, anything that says
+ * what the system is doing.
+ *
+ * It never returns a default. If the file is missing, unreadable, not JSON, or not an object,
+ * the answer is `{ ok: false, path, reason }` and every caller must show "unknown" with the
+ * path rather than a mode. There is no `signals-only (source: DEFAULT)` any more: a mode is a
+ * fact about a file that was read, or it is unknown.
+ */
+export async function readConfigForReport(path: string = configPath()): Promise<ConfigRead> {
+  const { readFile } = await import("node:fs/promises");
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const reason =
+      code === "ENOENT"
+        ? "the file does not exist at that path"
+        : `the file could not be read (${error instanceof Error ? error.message : String(error)})`;
+    return { ok: false, path, reason };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    return { ok: false, path, reason: `the file is not valid JSON (${error instanceof Error ? error.message : String(error)})` };
+  }
+  if (raw === null || typeof raw !== "object") {
+    return { ok: false, path, reason: `the file does not contain a JSON object (it holds ${JSON.stringify(raw)})` };
+  }
+  const config = parseConfig(raw);
+  // A config object whose mode did not come from the file (no "mode" key, or an invalid one)
+  // does not describe this account's execution mode, and saying "signals-only" would be the
+  // same invention as the fallback above. It is unknown, with the reason named.
+  if (config.modeSource !== "CONFIG") {
+    return {
+      ok: false,
+      path,
+      reason: `the file was read but states no usable "mode" (${config.problems.join("; ") || "no mode key"}), so the execution mode is unknown rather than defaulted`,
+    };
+  }
+  return { ok: true, config, path };
 }
 
 export function num(setting: ResolvedSetting): number {

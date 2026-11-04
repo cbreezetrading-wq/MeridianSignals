@@ -70,8 +70,19 @@ function Execution() {
         <p className={`rounded border p-3 text-sm ${report.report.notification?.delivered ? "border-emerald-400 bg-emerald-50" : "border-amber-400 bg-amber-50"}`}>
           {report.report.notification?.delivered ? `Delivered by ${report.report.notification.transport}.` : report.report.notification?.detail}
         </p>
-        <p className="text-sm text-slate-700">Orders submitted {report.report.counts?.orderRequests ?? "?"} · broker-confirmed fills {report.report.counts?.brokerConfirmedFills ?? "?"} · closes {report.report.counts?.closes ?? "?"} · refusals {report.report.counts?.refusals ?? "?"} · errors {report.report.counts?.errors ?? "?"} · open Meridian positions {report.report.protection?.managedOpenCount ?? "unmeasured"} · mode {report.report.mode?.current}</p>
-        {!!report.report.unmeasured?.length && <div className="rounded border border-slate-300 bg-slate-50 p-3 text-sm"><p className="font-semibold">Unmeasured in this report</p><ul className="mt-1 list-disc space-y-1 pl-5">{report.report.unmeasured.map((u: string, index: number) => <li key={index}>{u}</li>)}</ul></div>}
+        {report.report.status === "UNAVAILABLE"
+          ? <div role="alert" className="rounded border-2 border-red-500 bg-red-50 p-3 text-sm">
+              <p className="font-semibold">This report could not be built — it states no mode, no count and no P/L.</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5">
+                {(report.report.unavailable ?? []).map((u: any, index: number) => <li key={index}>{u.source === "RECORD" ? "The append-only record" : "The execution config"} at <code>{u.path}</code> — {u.reason}</li>)}
+              </ul>
+              <p className="mt-1">{report.report.statement}</p>
+              {report.report.previousReportId && <p className="mt-1">The most recent complete report is {report.report.previousReportId}.</p>}
+            </div>
+          : <>
+              <p className="text-sm text-slate-700">Orders submitted {report.report.counts?.orderRequests ?? "unmeasured"} · broker-confirmed fills {report.report.counts?.brokerConfirmedFills ?? "unmeasured"} · closes {report.report.counts?.closes ?? "unmeasured"} · refusals {report.report.counts?.refusals ?? "unmeasured"} · errors {report.report.counts?.errors ?? "unmeasured"} · open Meridian positions {report.report.protection?.managedOpenCount ?? "unmeasured"} · mode {report.report.mode?.current} (source: {report.report.mode?.source})</p>
+              {!!report.report.unmeasured?.length && <div className="rounded border border-slate-300 bg-slate-50 p-3 text-sm"><p className="font-semibold">Unmeasured in this report</p><ul className="mt-1 list-disc space-y-1 pl-5">{report.report.unmeasured.map((u: string, index: number) => <li key={index}>{u}</li>)}</ul></div>}
+            </>}
         <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded border bg-white p-3 text-xs">{report.text}</pre>
       </div>}
     </section>

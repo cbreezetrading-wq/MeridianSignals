@@ -39,15 +39,19 @@ Approval mode requires preview + submit. Nothing in this build trades live.`);
     // closed-trade history, and writes files. It cannot submit, cancel or modify anything.
     // createClient() rather than bootstrapClient(): a report is most useful exactly when the
     // interlock attestation is failing, so it must not depend on that check passing.
-    const config = await loadConfigFromDisk();
-    const result = await generateReport({ client: createClient(), config, trigger: "MANUAL", triggerDetail: "operator terminal command" });
+    //
+    // No config is passed in: generateReport reads it itself, strictly, and produces an
+    // UNAVAILABLE report naming the path rather than a default mode when it cannot. Passing a
+    // config from here is how the console came to print `signals-only (source: DEFAULT)`.
+    const result = await generateReport({ client: createClient(), trigger: "MANUAL", triggerDetail: "operator terminal command" });
     output({
       reportId: result.report.reportId,
       generatedAt: result.report.generatedAt,
+      status: result.report.status,
       files: result.files,
       recordSeq: result.recordSeq,
       notification: result.notification,
-      counts: result.report.counts,
+      ...(result.report.status === "OK" ? { mode: result.report.mode, counts: result.report.counts } : { unavailable: result.report.unavailable }),
     });
   }
   else {

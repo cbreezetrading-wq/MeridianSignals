@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { existsSync } from "node:fs";
 import { createClient, redactDeep } from "../../../../execution/lib/client.ts";
-import { loadConfigFromDisk, resolveSettings } from "../../../../execution/lib/config.ts";
+import { loadConfigFromDisk, readConfigForReport, resolveSettings } from "../../../../execution/lib/config.ts";
 import { configPath } from "../../../../execution/lib/paths.ts";
 import { buildStatus, pauseEntries, resumeEntries } from "../../../../execution/lib/ops.ts";
 import { evaluate, submitSignal, payloadHash } from "../../../../execution/lib/engine.ts";
@@ -123,6 +123,24 @@ export const Route = createFileRoute("/api/execution")({ server: { handlers: {
       if (body.action === "pause") return reply(await pauseEntries("Owner dashboard action"));
       if (body.action === "resume") return reply(await resumeEntries("Owner dashboard action"));
       if (body.action === "status") {
+        // The status line states the mode, so it must come from a config file that was READ.
+        // `loadConfigFromDisk` falls back to signals-only defaults, which is safe for an order
+        // path and a lie on a dashboard: it was printed as `signals-only (source: DEFAULT)`
+        // while config.json said `automatic`. Unreadable config -> refuse, naming the path.
+        const configRead = await readConfigForReport();
+        if (!configRead.ok) {
+          return reply(
+            {
+              error:
+                `The execution config could not be read at ${configRead.path} (${configRead.reason}). No mode, no status and ` +
+                "no account figure is shown, because every one of them would be an invention.",
+              configPath: configRead.path,
+              reason: configRead.reason,
+            },
+            503,
+          );
+        }
+        const config = configRead.config;
         const status = await buildStatus(createClient(), config);
         const signals = await getSignals();
         const instructions = instructionsFromSignals(signals, Number(resolveSettings(config).values.signalExpirySeconds.value));

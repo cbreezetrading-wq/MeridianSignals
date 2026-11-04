@@ -21,8 +21,8 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { createClient, redactDeep } from "./client.ts";
-import { loadConfigFromDisk } from "./config.ts";
-import { generateReport, readLatestReport, scrubAccountIds, type LatestReport } from "../report.ts";
+import { readConfigForReport } from "./config.ts";
+import { readLatestReportResult, generateReport, scrubAccountIds, type LatestReportResult } from "../report.ts";
 
 export const MIN_OPERATOR_KEY_LENGTH = 32;
 
@@ -58,8 +58,8 @@ const json = (body: unknown, status = 200): Response => Response.json(redactDeep
 export type ReportActionDeps = {
   /** Defaults to process.env.MERIDIAN_OPERATOR_KEY. Injectable for the tests. */
   operatorKey?: string | null;
-  /** Defaults to reading the newest report from the reports directory. */
-  readLatest?: () => Promise<LatestReport | null>;
+  /** Defaults to looking for the newest report in the one reports directory. Injectable for the tests. */
+  readLatest?: () => Promise<LatestReportResult>;
   /** Defaults to generating one against the live Practice account. Injectable for the tests. */
   generate?: (action: ReportActionName) => Promise<{ reportId: string; generatedAt: string; text: string; json: unknown; notification: unknown; recordSeq: number | null }>;
 };
@@ -85,14 +85,20 @@ export async function handleReportAction(input: ReportActionInput): Promise<Resp
     return json({ error: "Execution access is locked. Configure a separate operator key of at least 32 characters on the server." }, 401);
   }
 
-  const readLatest = deps.readLatest ?? (() => readLatestReport());
+  const readLatest = deps.readLatest ?? (() => readLatestReportResult());
   const generate =
     deps.generate ??
     (async () => {
-      const config = await loadConfigFromDisk();
+      // The config is read here, strictly: no default mode is invented for a file that could
+      // not be read. A failed read becomes an UNAVAILABLE report that names the path, which is
+      // the whole point — the console once printed `signals-only (source: DEFAULT)` from a
+      // directory that held no config while the real one said `automatic`.
+      const configRead = await readConfigForReport();
       const result = await generateReport({
         client: createClient(),
-        config,
+        config: configRead.ok ? configRead.config : null,
+        configUnavailable: configRead.ok ? null : { path: configRead.path, reason: configRead.reason },
+        configPath: configRead.path,
         trigger: "CONSOLE",
         triggerDetail: "generated on request from the authenticated console",
       });
@@ -112,18 +118,25 @@ export async function handleReportAction(input: ReportActionInput): Promise<Resp
       return json({ report: generated.json, text: generated.text, notification: generated.notification, recordSeq: generated.recordSeq });
     }
     const latest = await readLatest();
-    if (!latest) {
+    if (!latest.found) {
       return json(
         {
           report: null,
           text: null,
+          // The path is named, because the failure this replaced was reading the wrong
+          // directory and reporting it as "no report has been generated yet".
+          searched: latest.path,
+          reason: latest.reason,
           note:
-            "No report has been generated yet. The watcher generates one on its interval and immediately after any fill, close, refusal or error; this button generates one now.",
+            latest.reason === "NOT_GENERATED_YET"
+              ? `No report has been written at ${latest.path} yet. The watcher generates one on its interval and immediately after any fill, close, refusal or error; this button generates one now.`
+              : `The newest report at ${latest.path} could not be read: ${latest.detail}`,
         },
         200,
       );
     }
-    return json({ report: latest.json, text: latest.text, generatedAt: latest.generatedAt, reportId: latest.reportId });
+    const found = latest.report;
+    return json({ report: found.json, text: found.text, generatedAt: found.generatedAt, reportId: found.reportId, path: found.jsonPath });
   } catch (error) {
     // A failed generation is reported as a failure. It is never dressed up as a report.
     return json(
