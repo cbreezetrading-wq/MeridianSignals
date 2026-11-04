@@ -20,30 +20,47 @@
     "owner approves the first Practice order.",
     "",
     "submissionPolicy.maxAttempts is 1: one submission attempt per approved payload. An uncertain",
-    "outcome (timeout, lost connection) is never retried — it is recorded and the signal stays",
+    "outcome (timeout, lost connection) is never retried \u2014 it is recorded and the signal stays",
     "blocked until the broker's own state has been read. The order path performs exactly one POST,",
     "so a configured value above 1 cannot raise it; status.json reports both numbers.",
     "",
     "meridian-h1-v1 is enabled so the invented ruleset is armed to originate Practice orders for the",
-    "demo test under approval — every order it originates is labelled INVENTED_RULESET_TEST, and it",
+    "demo test under approval \u2014 every order it originates is labelled INVENTED_RULESET_TEST, and it",
     "is measured not tradeable at both hourly and daily granularity. owner-method stays disabled:",
     "the owner has supplied no rule. automatic stays unreachable (automaticAcknowledged false).",
     "",
     "The profile cannot change the trading host: the host is a frozen constant in lib/interlock.ts",
-    "and the order path asserts it on every request."
+    "and the order path asserts it on every request.",
+    "",
+    "report.intervalHours is 6: a plain-language report of orders, fills, closes, refusals and",
+    "errors is generated on that interval and immediately after any of those events. It is a",
+    "team default, not an owner instruction. report.transport is \"none\": the report is stored",
+    "and shown on the console, and NOTHING IS SENT ANYWHERE, because the owner has not chosen a",
+    "notification channel. The report says exactly that rather than claiming a delivery."
   ],
-  "mode": "approve-before-execution",
+  "mode": "automatic",
   "useTestProfile": false,
   "useDemoTestProfile": true,
-  "automaticAcknowledged": false,
-  "acknowledgedBy": null,
+  "automaticAcknowledged": true,
+  "acknowledgedBy": "owner \u2014 chat instruction 2026-11-03: switch the Practice demo test to automatic execution (supersedes the earlier 'approve the first Practice order' instruction)",
   "submissionPolicy": {
     "maxAttempts": 1,
     "note": "One submission attempt per approved payload. An uncertain outcome is never retried; the signal stays blocked until broker state is read."
   },
+  "report": {
+    "intervalHours": 6,
+    "transport": "none",
+    "note": "A plain-language execution report is generated every 6 hours and immediately after any fill, close, refusal or error, and written to execution/reports/. 6 hours is the team's default, not an owner instruction. transport is \"none\": with no channel configured the report records the exact sentence 'no notification channel configured \u2014 report generated, nothing sent' and nothing is sent anywhere. Choosing a channel is the owner's decision; when one is chosen it is registered in execution/notify.ts and its name goes here."
+  },
   "ownerSettings": {},
   "strategies": [
-    { "id": "meridian-h1-v1", "enabled": true },
-    { "id": "owner-method", "enabled": false }
+    {
+      "id": "meridian-h1-v1",
+      "enabled": true
+    },
+    {
+      "id": "owner-method",
+      "enabled": false
+    }
   ]
 }

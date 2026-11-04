@@ -71,3 +71,20 @@ export function pausePath(): string {
 export function dayStatePath(): string {
   return executionPath("day-state.json");
 }
+
+/**
+ * Where the periodic plain-language reports are written. A directory of its own so the
+ * report files (and the state that decides when the next one is due) are never mistaken
+ * for the append-only record: they are derived, reproducible artefacts, and the record
+ * remains the only authority.
+ */
+export function reportsDir(): string {
+  const override = process.env.MERIDIAN_REPORTS_DIR;
+  if (typeof override === "string" && override.trim() !== "") return resolve(override);
+  return executionPath("reports");
+}
+
+/** The report scheduler's own state: last report id/time and the last record seq it covered. */
+export function reportStatePath(dir: string = reportsDir()): string {
+  return resolve(dir, "state.json");
+}

@@ -152,6 +152,17 @@ export type ExecutionConfig = {
    * and the difference is reported in status rather than silently ignored.
    */
   submissionMaxAttempts: number;
+  /**
+   * How often the watcher generates a plain-language execution report, in hours.
+   * DEFAULT_REPORT_INTERVAL_HOURS (6) when config says nothing — the team's default, not a
+   * value the owner chose. A report is also generated immediately after a fill, a close, a
+   * refusal or an error, whatever this interval says.
+   */
+  reportIntervalHours: number;
+  /** Where the report is sent. "none" is the default and sends nothing anywhere. */
+  reportTransport: string;
+  /** Where the interval and transport came from, so the report can label them. */
+  reportConfigSource: "DEFAULT" | "CONFIG";
   ownerSettings: Partial<Record<RequiredSettingKey, unknown>>;
   strategies: StrategyConfig[];
   /** Anything the config file got wrong, kept verbatim for the record. */
@@ -160,6 +171,15 @@ export type ExecutionConfig = {
 
 /** The order path submits once. There is no retry loop, so this is the hard ceiling. */
 export const MAX_SUBMISSION_ATTEMPTS = 1;
+
+/**
+ * Six hours: often enough that an automatic fill is reported the same day, rare enough that
+ * the reports stay readable. It is a team default with no owner behind it, and the report
+ * says so rather than presenting it as the owner's preference.
+ */
+export const DEFAULT_REPORT_INTERVAL_HOURS = 6;
+/** The default transport sends nothing. There is no channel until the owner chooses one. */
+export const DEFAULT_REPORT_TRANSPORT = "none";
 
 import { configPath } from "./paths.ts";
 export { configPath };
@@ -205,6 +225,9 @@ export function defaultConfig(): ExecutionConfig {
     automaticAcknowledged: false,
     acknowledgedBy: null,
     submissionMaxAttempts: MAX_SUBMISSION_ATTEMPTS,
+    reportIntervalHours: DEFAULT_REPORT_INTERVAL_HOURS,
+    reportTransport: DEFAULT_REPORT_TRANSPORT,
+    reportConfigSource: "DEFAULT",
     ownerSettings: {},
     strategies: defaultStrategies(),
     problems: [],
@@ -273,6 +296,36 @@ export function parseConfig(raw: unknown): ExecutionConfig {
       );
     } else {
       base.submissionMaxAttempts = maxAttempts;
+    }
+  }
+
+  // Report scheduling and delivery. Both fail SOFT to the honest default: a bad interval or an
+  // unknown transport must never stop the watcher, and must never look like a delivery channel.
+  const report = obj.report;
+  if (report !== undefined) {
+    if (report === null || typeof report !== "object") {
+      base.problems.push(`report must be an object (got ${JSON.stringify(report)}); using the default interval of ${DEFAULT_REPORT_INTERVAL_HOURS}h and transport "none"`);
+    } else {
+      const r = report as Record<string, unknown>;
+      if (r.intervalHours !== undefined) {
+        const hours = Number(r.intervalHours);
+        if (!Number.isFinite(hours) || hours <= 0 || hours > 24 * 14) {
+          base.problems.push(
+            `report.intervalHours ${JSON.stringify(r.intervalHours)} is not a positive number of hours within 14 days; using ${DEFAULT_REPORT_INTERVAL_HOURS}h`,
+          );
+        } else {
+          base.reportIntervalHours = hours;
+          base.reportConfigSource = "CONFIG";
+        }
+      }
+      if (r.transport !== undefined) {
+        if (typeof r.transport !== "string" || r.transport.trim() === "") {
+          base.problems.push(`report.transport must be a non-empty string; using "none" (nothing is sent)`);
+        } else {
+          base.reportTransport = r.transport.trim();
+          base.reportConfigSource = "CONFIG";
+        }
+      }
     }
   }
 

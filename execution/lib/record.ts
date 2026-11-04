@@ -56,7 +56,13 @@ export type RecordKind =
   | "RECONCILIATION"
   | "BROKER_STATE_READ"
   /** Realised risk at the broker fill, recorded next to the budgeted figure. */
-  | "REALISED_RISK";
+  | "REALISED_RISK"
+  /**
+   * A plain-language report was generated. The record carries the report id, the record
+   * ids it was built from and what happened to the delivery attempt — including that
+   * nothing was sent when no notification channel is configured.
+   */
+  | "REPORT_GENERATED";
 
 export type ExecutionRecord = {
   seq: number;

@@ -25,6 +25,7 @@ function Execution() {
   const [key, setKey] = useState("");
   const [data, setData] = useState<any>(null);
   const [preview, setPreview] = useState<any>(null);
+  const [report, setReport] = useState<any>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   async function action(name: string, extra: object = {}) {
@@ -37,6 +38,7 @@ function Execution() {
       if (!res.ok) throw new Error(result.error ?? "Execution unavailable");
       if (name === "status") { setData(result); setPreview(null); }
       else if (name === "preview") setPreview(result);
+      else if (name === "report" || name === "generate-report") { setReport(result); if (result.note) setMessage(result.note); }
       else { setMessage(result.reasons?.join("; ") || result.state || "Control applied. Refresh to read broker state."); setPreview(null); }
     } catch (error) { setMessage(String(error)); setPreview(null); if (name === "status") setData(null); }
     finally { setBusy(false); }
@@ -55,6 +57,24 @@ function Execution() {
     </form>
     <p className="text-xs text-slate-500">The key stays in this page’s memory. Account credentials remain on the server. Status is a snapshot; refresh before relying on it.</p>
     {message && <p role="status" className="rounded border p-4">{message}</p>}
+    <section className="rounded border p-4" aria-labelledby="report-heading">
+      <h2 id="report-heading" className="text-xl font-semibold">Execution report</h2>
+      <p className="mt-1 text-sm text-slate-700">A plain-language digest of what the system did: orders submitted, fills the broker confirmed, closes with their P/L and financing, refusals with the reason, errors, open positions and their stops, the active mode, and the account NAV. Every figure names the record id it came from; anything that could not be measured is labelled unmeasured. An order request is never shown as a trade.</p>
+      <p className="mt-2 text-sm text-slate-700">The watcher generates one on its interval and immediately after any fill, close, refusal or error. <strong>No notification channel is configured, so a generated report is stored here and on the server and nothing is sent anywhere.</strong></p>
+      <div className="mt-3 flex flex-wrap gap-3">
+        <button disabled={busy || !key} className={button} onClick={() => action("report")}>Show latest report</button>
+        <button disabled={busy || !key} className={button} onClick={() => action("generate-report")}>Generate now</button>
+      </div>
+      {report?.report && <div className="mt-4 space-y-3">
+        <p className="text-sm"><strong>{report.report.reportId}</strong> · generated {report.report.generatedAt} · trigger {report.report.trigger}{report.report.triggerDetail ? ` (${report.report.triggerDetail})` : ""}{typeof report.recordSeq === "number" ? ` · recorded as seq ${report.recordSeq}` : ""}</p>
+        <p className={`rounded border p-3 text-sm ${report.report.notification?.delivered ? "border-emerald-400 bg-emerald-50" : "border-amber-400 bg-amber-50"}`}>
+          {report.report.notification?.delivered ? `Delivered by ${report.report.notification.transport}.` : report.report.notification?.detail}
+        </p>
+        <p className="text-sm text-slate-700">Orders submitted {report.report.counts?.orderRequests ?? "?"} · broker-confirmed fills {report.report.counts?.brokerConfirmedFills ?? "?"} · closes {report.report.counts?.closes ?? "?"} · refusals {report.report.counts?.refusals ?? "?"} · errors {report.report.counts?.errors ?? "?"} · open Meridian positions {report.report.protection?.managedOpenCount ?? "unmeasured"} · mode {report.report.mode?.current}</p>
+        {!!report.report.unmeasured?.length && <div className="rounded border border-slate-300 bg-slate-50 p-3 text-sm"><p className="font-semibold">Unmeasured in this report</p><ul className="mt-1 list-disc space-y-1 pl-5">{report.report.unmeasured.map((u: string, index: number) => <li key={index}>{u}</li>)}</ul></div>}
+        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded border bg-white p-3 text-xs">{report.text}</pre>
+      </div>}
+    </section>
     {data && <>
       {!!data.status.alerts?.length && <section role="alert" className="rounded border border-red-400 bg-red-50 p-4"><h2 className="font-semibold">Risk and record alerts</h2><ul className="list-disc space-y-2 pl-5">{data.status.alerts.map((alert: string, index: number) => <li key={index}>{alert}</li>)}</ul></section>}
       {!!data.status.settingsProfile?.demoTestProfileInUse && <section role="note" className="rounded border-2 border-violet-500 bg-violet-50 p-4 text-sm">
