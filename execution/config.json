@@ -20,14 +20,14 @@
     "owner approves the first Practice order.",
     "",
     "submissionPolicy.maxAttempts is 1: one submission attempt per approved payload. An uncertain",
-    "outcome (timeout, lost connection) is never retried \u2014 it is recorded and the signal stays",
+    "outcome (timeout, lost connection) is never retried — it is recorded and the signal stays",
     "blocked until the broker's own state has been read. The order path performs exactly one POST,",
     "so a configured value above 1 cannot raise it; status.json reports both numbers.",
     "",
     "meridian-h1-v1 is enabled so the invented ruleset is armed to originate Practice orders for the",
-    "demo test under approval \u2014 every order it originates is labelled INVENTED_RULESET_TEST, and it",
+    "demo test under approval — every order it originates is labelled INVENTED_RULESET_TEST, and it",
     "is measured not tradeable at both hourly and daily granularity. owner-method stays disabled:",
-    "the owner has supplied no rule. automatic stays unreachable (automaticAcknowledged false).",
+    "the owner has supplied no rule. Mode is automatic by the owner's 2026-11-03 instruction, acknowledged above; the earlier 'approve the first Practice order' directive is superseded, not silently dropped.",
     "",
     "The profile cannot change the trading host: the host is a frozen constant in lib/interlock.ts",
     "and the order path asserts it on every request.",
@@ -42,7 +42,7 @@
   "useTestProfile": false,
   "useDemoTestProfile": true,
   "automaticAcknowledged": true,
-  "acknowledgedBy": "owner \u2014 chat instruction 2026-11-03: switch the Practice demo test to automatic execution (supersedes the earlier 'approve the first Practice order' instruction)",
+  "acknowledgedBy": "owner — chat instruction 2026-11-03: switch the Practice demo test to automatic execution (supersedes the earlier 'approve the first Practice order' instruction)",
   "submissionPolicy": {
     "maxAttempts": 1,
     "note": "One submission attempt per approved payload. An uncertain outcome is never retried; the signal stays blocked until broker state is read."
@@ -50,7 +50,7 @@
   "report": {
     "intervalHours": 6,
     "transport": "none",
-    "note": "A plain-language execution report is generated every 6 hours and immediately after any fill, close, refusal or error, and written to execution/reports/. 6 hours is the team's default, not an owner instruction. transport is \"none\": with no channel configured the report records the exact sentence 'no notification channel configured \u2014 report generated, nothing sent' and nothing is sent anywhere. Choosing a channel is the owner's decision; when one is chosen it is registered in execution/notify.ts and its name goes here."
+    "note": "A plain-language execution report is generated every 6 hours and immediately after any fill, close, refusal or error, and written to execution/reports/. 6 hours is the team's default, not an owner instruction. transport is \"none\": with no channel configured the report records the exact sentence 'no notification channel configured — report generated, nothing sent' and nothing is sent anywhere. Choosing a channel is the owner's decision; when one is chosen it is registered in execution/notify.ts and its name goes here."
   },
   "ownerSettings": {},
   "strategies": [
