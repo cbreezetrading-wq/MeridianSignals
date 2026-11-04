@@ -758,9 +758,12 @@ function DailyBacktestPage() {
           </table>
         </div>
         <p className="mt-3">
-          Three of the four pairs lose in pips and all four are negative or marginal in R. Four pairs
-          losing at slightly different rates is what a rule with no measured tendency and a fixed
-          cost looks like; it is not four independent chances that one of them is real.
+          Two of the four pairs lose in pips — EUR/USD (−2,971.2) and USD/JPY (−1,327.3) carry the
+          whole loss — while GBP/USD (+45.2) and AUD/USD (+880.0) are small positives. In R, two are
+          negative, one is marginal (+1.19) and one is positive (+13.61). Pairs scattering around zero
+          at slightly different rates is what a rule with no measured tendency and a fixed cost looks
+          like; it is not four independent chances that one of them is real, and the two that end
+          slightly positive are not evidence that they are.
         </p>
       </Section>
 
@@ -1011,9 +1014,12 @@ function DailyBacktestPage() {
           over anything here.
         </p>
         <p className="mt-2 text-sm text-slate-700">
-          Every figure above is read from the daily run&rsquo;s results file, or computed from its
-          stored per-trade rows and labelled as computed where it appears. The file is kept and can be
-          re-checked against this page. Where a number is negative, it is shown negative.
+          Every figure above is read from the daily run&rsquo;s results file, computed from its stored
+          per-trade rows and labelled as computed where it appears, read from the hourly results file
+          where it is an hourly comparison, or — for the two readings of the optimistic variant —
+          taken from the independent replay and named as the replay&rsquo;s rather than this
+          run&rsquo;s. The file is kept and can be re-checked against this page. Where a number is
+          negative, it is shown negative.
         </p>
         <p className="mt-3 text-sm text-slate-700">
           <strong className="font-semibold">
@@ -1021,8 +1027,14 @@ function DailyBacktestPage() {
           </strong>{" "}
           A second implementation of this ruleset — written from the frozen specification and the
           written-down conventions, and which never read this project&rsquo;s engine — replayed the
-          same stored data and was written and hashed <em>before</em> this project&rsquo;s results file
-          was opened. It produced{" "}
+          same stored data. Its first output was written and hashed <em>before</em> this
+          project&rsquo;s results file was opened; that first run had a defect of its own, described
+          below, so the replay was corrected and re-run, and{" "}
+          <strong className="font-semibold">
+            the comparison reported here is the corrected run
+          </strong>
+          , made after the file had been opened. The blind ordering is evidence about the code, not a
+          blind agreement with these numbers. It produced{" "}
           <strong className="font-semibold">
             {num(net.trades, 0)} trades, {num(net.totalPips)} pips, profit factor{" "}
             {num(net.profitFactor, 2)}
@@ -1037,7 +1049,8 @@ function DailyBacktestPage() {
             field-for-field
           </strong>{" "}
           on eleven fields each: trigger bar, fill bar, exit bar, side, fill price, exit price, stop,
-          target, exit reason, pips and R. Per-pair totals, total R, drawdown, the exit mix and the
+          target, exit reason, pips and R (pips within ±0.05, R within ±0.005 — rounding slack, not a
+          free pass). Per-pair totals, total R, drawdown, the exit mix and the
           held-out block reconcile too.
         </p>
         <p className="mt-2 text-sm text-slate-700">
@@ -1045,15 +1058,28 @@ function DailyBacktestPage() {
           both implementations were written from the same written rules, so this establishes that the
           figures are not artefacts of this project&rsquo;s code, not that the rules are right. It says
           nothing about swap, slippage beyond the quoted spread, commission or sizing, which are
-          excluded from both. And it found four things that did not reconcile, all of them now stated
-          above rather than dropped: the mean-spread label (the stored 6.361 is an unweighted average
-          of four per-pair means; the trade-weighted figure over the 208 entry-fill bars is 6.3260),
-          the combined longest losing streak (18 on an entry-time ordering, 17 on exit time), the
-          zero-cost win rate with four break-evens counted as losses (31.7%, against 32.35% with them
-          excluded), and the optimistic upper-bound variant, which the replay could not reproduce at
-          all and which is now labelled unverified on this page. None of the four changes a pip total
-          or a profit factor; the optimistic variant changes the sentence that used to sit next to it,
-          and that sentence has been withdrawn.
+          excluded from both. And it found five things that did not reconcile, all of them now stated
+          above or corrected here rather than dropped: the mean-spread label (the stored 6.361 is an
+          unweighted average of four per-pair means; the trade-weighted figure over the 208 entry-fill
+          bars is 6.3260), the combined longest losing streak (18 on an entry-time ordering, 17 on
+          exit time), the zero-cost win rate with four break-evens counted as losses (31.7%, against
+          32.35% with them excluded), the optimistic upper-bound variant, which the replay could not
+          reproduce at all and which is now labelled unverified on this page, and one citation: earlier
+          prose on this page put the zero-cost held-out pips (+318.2) together with the headline
+          held-out R (+4.81R) as though they were one number. The held-out block above quotes the
+          headline variant, +267.2 pips / +4.81R; the zero-cost held-out is +318.2 pips / +5.31R. None
+          of the first three changes a pip total or a profit factor; the fourth is a variant the replay
+          could not reproduce, so its stored pip total is labelled unverified above rather than counted
+          as a total; and the fifth changes a citation, not a result. The optimistic variant changes
+          the sentence that used to sit next to it, and that sentence has been withdrawn.
+        </p>
+        <p className="mt-2 text-sm text-slate-700">
+          The replay&rsquo;s own first run had a defect, reported in its findings rather than hidden:
+          it tested short trades&rsquo; stops against the bid series instead of the ask, which put one
+          AUD/USD trade (triggered 2005-12-20) on the wrong exit bar. It moved no total, no per-pair
+          figure and no streak — which is exactly why it is written down, because an aggregate
+          comparison cannot see an error like that and only a record-level one finds it. The corrected
+          record is the one compared above.
         </p>
       </section>
 

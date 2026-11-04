@@ -9,7 +9,10 @@
  * the hourly side of the cost comparison, the trade-weighted mean spread on the
  * entry-fill bars and the longest losing run under both orderings — are computed
  * here from stored per-trade rows or from the hourly results file, and are
- * labelled on the page as computed. Nothing on the page is typed in by hand.
+ * labelled on the page as computed. The only numbers typed into the page by hand
+ * are the independent replay's own readings of the optimistic variant, which the
+ * file's stored total for that variant does not reproduce, and they are named on
+ * the page as the replay's rather than this run's.
  *
  * Two of those derived figures exist because the independent replay of this
  * backtest found the matching stored field did not reconcile with the per-trade
