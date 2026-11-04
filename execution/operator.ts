@@ -8,7 +8,8 @@ import { buildStatus, pauseEntries, resumeEntries, reconcile, cancelPendingOrder
 import { executionPath, executionDir } from "./lib/paths.ts";
 import { readRecords } from "./lib/record.ts";
 import { redactDeep } from "./lib/client.ts";
-import { generateReport, reportDue, readReportState } from "./report.ts";
+import { generateReport, reportDue, readReportState, readLatestReportResult, subjectStamp } from "./report.ts";
+import { createEmailTransport, readEmailEnv, missingEnvDetail } from "./emailTransport.ts";
 import { instructionsFromSignals } from "./lib/signalAdapter.ts";
 import type { SignalInstruction } from "./lib/instruction.ts";
 import type { SignalsPayload } from "../site/src/lib/market/types.ts";
@@ -20,16 +21,24 @@ status | reconcile | pause | resume | cancel-entries | close-managed | report
 preview <instruction.json>
 submit <instruction.json> <reviewed-payload-hash>
 watch
+notify-test
 
 report builds a plain-language report from the record and a live broker read and writes it
 to MERIDIAN_EXECUTION_DIR/reports/. It sends nothing anywhere unless a notification
-transport is configured (the default is none).
+transport is configured. Email is the transport the owner chose (2026-11-04); it needs
+MERIDIAN_SMTP_USER, MERIDIAN_SMTP_PASS and MERIDIAN_ALERT_TO, and until all three are saved
+it sends nothing, connects to nothing, and says which of the three is missing.
+
+notify-test sends ONE real test message through the configured transport and prints the
+outcome with the SMTP code. It is a terminal command on purpose: there is no console or HTTP
+action that can send mail on demand, because an authenticated endpoint that can send mail is
+a spam vector this system does not need.
 
 watch reads MERIDIAN_SIGNALS_URL, writes pending-instructions.json and status.json
 inside MERIDIAN_EXECUTION_DIR. Only explicit automatic mode submits on watch.
 Approval mode requires preview + submit. Nothing in this build trades live.`);
 } else {
-  const allowed = ["status", "reconcile", "pause", "resume", "cancel-entries", "close-managed", "preview", "submit", "watch", "report"];
+  const allowed = ["status", "reconcile", "pause", "resume", "cancel-entries", "close-managed", "preview", "submit", "watch", "report", "notify-test"];
   if (!allowed.includes(command)) throw new Error("Unknown command; run help");
   const output = (value: unknown) => console.log(JSON.stringify(redactDeep(value), null, 2));
   if (command === "pause") output(await pauseEntries("Owner terminal command"));
@@ -53,6 +62,54 @@ Approval mode requires preview + submit. Nothing in this build trades live.`);
       notification: result.notification,
       ...(result.report.status === "OK" ? { mode: result.report.mode, counts: result.report.counts } : { unavailable: result.report.unavailable }),
     });
+  }
+  else if (command === "notify-test") {
+    // ONE real message through the configured transport, and its outcome in the terminal.
+    // Deliberately a terminal command and not an HTTP action: an authenticated endpoint that
+    // can send mail on demand is a spam vector this system does not need. It touches no
+    // order, no record entry and no report file — it sends and prints.
+    const settings = readEmailEnv();
+    if (!settings.configured) {
+      output({
+        configured: false,
+        delivered: false,
+        missing: settings.missing,
+        detail: missingEnvDetail(settings.missing),
+        note: "nothing was sent and no connection to any mail server was opened",
+      });
+      process.exitCode = 1;
+    } else {
+      // Attempt lines go to stderr so stdout stays one JSON object.
+      const transport = createEmailTransport({ log: (line) => console.error(line) });
+      const latest = await readLatestReportResult();
+      const now = new Date();
+      const result = await transport.send({
+        reportId: latest.found ? latest.report.reportId : "notify-test",
+        generatedAt: now.toISOString(),
+        subject: `Meridian: notification test — ${subjectStamp(now.toISOString())}`,
+        text: [
+          "This is a delivery test of the Meridian Signals email transport.",
+          "It is not a report and it is not an order: nothing was submitted, cancelled or modified.",
+          "",
+          latest.found
+            ? `The most recent report on disk (${latest.report.reportId}) is included below for reference.`
+            : "No report has been written to the reports directory yet.",
+          "",
+          latest.found ? latest.report.text : "",
+        ].join("\n"),
+        json: latest.found ? latest.report.json : null,
+      });
+      output({
+        configured: result.configured,
+        delivered: result.delivered,
+        smtpCode: result.smtpCode,
+        messageId: result.messageId,
+        stage: result.stage,
+        detail: result.detail,
+        attempts: result.attempts,
+      });
+      if (!result.delivered) process.exitCode = 1;
+    }
   }
   else {
     const { client } = await bootstrapClient();
