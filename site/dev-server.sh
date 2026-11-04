@@ -17,19 +17,29 @@
 set -u
 
 SITE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUPERVISOR=/home/team/shared/execution/install-supervisor.sh
+SUPERVISOR="$SITE_DIR/../execution/install-supervisor.sh"
+
+# Hold a kernel lock for the lifetime of Vite. Duplicate start paths exit before
+# starting the worker or another server; SIGKILL releases this lock automatically.
+mkdir -p "$SITE_DIR/.run" || exit 1
+command -v flock >/dev/null 2>&1 || { echo "[dev-server] flock unavailable; refusing unlocked startup" >&2; exit 1; }
+exec 9>"$SITE_DIR/.run/site-server.lock" || exit 1
+if ! flock -n 9; then
+  echo "[dev-server] site server already starting or running; duplicate start skipped"
+  exit 0
+fi
 
 if [ -x "$SUPERVISOR" ]; then
   # --no-entrypoint: the boot hook in /entrypoint.sh is image-level and does not survive a
   # restart, so this path must not depend on being able to rewrite it.
   echo "[dev-server] $(date -u +%FT%TZ) checking the worker supervisor (idempotent; starts nothing if one is running)"
-  "$SUPERVISOR" --boot --no-entrypoint ||
+  "$SUPERVISOR" --boot --no-entrypoint 9>&- ||
     echo "[dev-server] $(date -u +%FT%TZ) worker supervisor not started; serving the site anyway" >&2
 fi
 
 cd "$SITE_DIR" || exit 1
 VITE="$SITE_DIR/node_modules/.bin/vite"
 if [ -x "$VITE" ]; then
-  exec "$VITE" dev "$@"
+  exec "$VITE" dev "$@" --port 3000 --strictPort
 fi
-exec bun x vite dev "$@"
+exec bun x vite dev "$@" --port 3000 --strictPort
