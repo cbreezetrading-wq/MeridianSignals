@@ -6,9 +6,19 @@
  * arithmetic on outcomes: it reads the file and hands it to the page. The
  * handful of figures the page must have but the file does not store as a field
  * — the 95% interval on per-trade R, the share of trades held a week or longer,
- * and the hourly side of the cost comparison — are computed here from stored
- * per-trade rows or from the hourly results file, and are labelled on the page
- * as computed. Nothing on the page is typed in by hand.
+ * the hourly side of the cost comparison, the trade-weighted mean spread on the
+ * entry-fill bars and the longest losing run under both orderings — are computed
+ * here from stored per-trade rows or from the hourly results file, and are
+ * labelled on the page as computed. Nothing on the page is typed in by hand.
+ *
+ * Two of those derived figures exist because the independent replay of this
+ * backtest found the matching stored field did not reconcile with the per-trade
+ * record: `meanSpreadAtEntryFillPips` is an unweighted mean of four per-pair
+ * means (6.361), where the trade-weighted mean over the entry-fill bars is
+ * 6.3260; and `combined.longestLosingStreak` counts on an entry-time ordering
+ * (18), where the frozen exit-time ordering gives 17. Both stored fields are
+ * left untouched and the page shows the reconciled figure next to the stored
+ * one, so neither is silently preferred.
  *
  * Where the bytes come from is decided by resolveData() in bundledData.ts, in one
  * documented order: env override → the shared path on the owner's machine → the
@@ -178,6 +188,35 @@ export type DailyPayload = {
  * place so the page cannot invent one.
  */
 export type DailyDerived = {
+  /**
+   * The mean spread paid on entry-fill bars, computed two ways from the stored
+   * per-trade `spreadAtFillPips` rows of the headline variant. `tradeWeighted`
+   * is the mean over the 208 entry-fill bars; `perPairUnweighted` is the mean of
+   * the four per-pair means, which is what the results file's
+   * `costEdgeDecomposition.meanSpreadAtEntryFillPips` stores (6.361) and which
+   * gives a 48-trade pair the same weight as a 63-trade pair. The independent
+   * replay's anchor is the trade-weighted one (6.3260), so the page quotes that
+   * and names the stored one rather than silently showing either.
+   */
+  entryFillSpread: {
+    n: number;
+    tradeWeighted: number;
+    perPairUnweighted: number;
+    perPair: Record<string, number>;
+  } | null;
+  /**
+   * The longest run of consecutive losing trades over all 208 headline trades,
+   * computed from the stored rows under both orderings. `byExitTime` is the
+   * realised-equity order (the convention frozen for the daily run: sort by exit
+   * bar, ties by trigger bar, then pair) and is the one the page quotes;
+   * `byEntryTime` is the ordering the results file's own
+   * `combined.longestLosingStreak` field was computed under. The independent
+   * replay found 17 and 18 respectively — both from the same 208 trades.
+   */
+  losingStreak: {
+    byExitTime: number;
+    byEntryTime: number;
+  } | null;
   /** From the stored per-trade R of the headline variant (`tradesHeadline[*].r`). */
   perTradeR: {
     n: number;
@@ -211,15 +250,92 @@ export type DailyLoad =
 /** Two-sided 95% normal quantile. n is large enough (208) that this is exact. */
 const Z95 = 1.96;
 
-type TradeRow = { r?: number; holdingDays?: number };
+type TradeRow = {
+  r?: number;
+  holdingDays?: number;
+  pips?: number;
+  spreadAtFillPips?: number;
+  triggerBarUtc?: string;
+  fillBarUtc?: string;
+  exitBarUtc?: string;
+  pair?: string;
+};
+
+function mean(xs: number[]): number {
+  return xs.reduce((s, v) => s + v, 0) / xs.length;
+}
+
+/** Longest run of consecutive losing trades under one ordering of the book. */
+function longestLosingRun(
+  rows: TradeRow[],
+  order: (a: TradeRow, b: TradeRow) => number,
+): number | null {
+  const pips = rows.map((r) => r.pips).filter((v): v is number => typeof v === "number");
+  if (pips.length === 0 || pips.length !== rows.length) return null;
+  let best = 0;
+  let run = 0;
+  for (const r of [...rows].sort(order)) {
+    // A break-even (exactly 0) ends a losing run; it is neither a loss nor a win.
+    if ((r.pips as number) < 0) {
+      run += 1;
+      best = Math.max(best, run);
+    } else {
+      run = 0;
+    }
+  }
+  return best;
+}
 
 function derive(trades: Record<string, TradeRow[]> | undefined): {
   perTradeR: DailyDerived["perTradeR"];
   heldAtLeastAWeek: DailyDerived["heldAtLeastAWeek"];
+  entryFillSpread: DailyDerived["entryFillSpread"];
+  losingStreak: DailyDerived["losingStreak"];
 } {
   const rows = trades ? Object.values(trades).flat() : [];
   const rs = rows.map((r) => r.r).filter((v): v is number => typeof v === "number");
   const days = rows.map((r) => r.holdingDays).filter((v): v is number => typeof v === "number");
+
+  // Mean spread on the entry-fill bars, two ways, from the stored per-trade rows.
+  const perPair: Record<string, number> = {};
+  if (trades) {
+    for (const [pair, rs2] of Object.entries(trades)) {
+      const sp = (rs2 ?? [])
+        .map((r) => r.spreadAtFillPips)
+        .filter((v): v is number => typeof v === "number");
+      if (sp.length > 0) perPair[pair] = mean(sp);
+    }
+  }
+  const allSpreads = rows
+    .map((r) => r.spreadAtFillPips)
+    .filter((v): v is number => typeof v === "number");
+  const entryFillSpread =
+    allSpreads.length > 0 && Object.keys(perPair).length > 0
+      ? {
+          n: allSpreads.length,
+          tradeWeighted: mean(allSpreads),
+          perPairUnweighted: mean(Object.values(perPair)),
+          perPair,
+        }
+      : null;
+
+  // The longest losing run, under the exit-time order and under the entry-time one.
+  const byExit = longestLosingRun(
+    rows,
+    (a, b) =>
+      String(a.exitBarUtc ?? "").localeCompare(String(b.exitBarUtc ?? "")) ||
+      String(a.triggerBarUtc ?? "").localeCompare(String(b.triggerBarUtc ?? "")) ||
+      String(a.pair ?? "").localeCompare(String(b.pair ?? "")),
+  );
+  const byEntry = longestLosingRun(
+    rows,
+    (a, b) =>
+      String(a.fillBarUtc ?? "").localeCompare(String(b.fillBarUtc ?? "")) ||
+      String(a.triggerBarUtc ?? "").localeCompare(String(b.triggerBarUtc ?? "")) ||
+      String(a.pair ?? "").localeCompare(String(b.pair ?? "")),
+  );
+  const losingStreak =
+    byExit !== null && byEntry !== null ? { byExitTime: byExit, byEntryTime: byEntry } : null;
 
   let perTradeR: DailyDerived["perTradeR"] = null;
   if (rs.length >= 2) {
@@ -247,7 +363,7 @@ function derive(trades: Record<string, TradeRow[]> | undefined): {
         }
       : null;
 
-  return { perTradeR, heldAtLeastAWeek };
+  return { perTradeR, heldAtLeastAWeek, entryFillSpread, losingStreak };
 }
 
 export async function loadDailyBacktestResults(): Promise<DailyLoad> {
@@ -302,6 +418,8 @@ export async function loadDailyBacktestResults(): Promise<DailyLoad> {
     derived: {
       perTradeR: derived.perTradeR,
       heldAtLeastAWeek: derived.heldAtLeastAWeek,
+      entryFillSpread: derived.entryFillSpread,
+      losingStreak: derived.losingStreak,
       hourly,
     },
   };

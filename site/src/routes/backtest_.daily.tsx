@@ -200,6 +200,8 @@ function DailyBacktestPage() {
 
   const ci = derived.perTradeR;
   const weekPlus = derived.heldAtLeastAWeek;
+  const streak = derived.losingStreak;
+  const entrySpread = derived.entryFillSpread;
 
   const exitKeys = ["stop", "target", "cross-against"] as const;
   const exitLabels: Record<string, string> = {
@@ -253,10 +255,22 @@ function DailyBacktestPage() {
           <strong className="font-semibold">{num(net.totalR, 2)}R</strong> · win rate{" "}
           {num(net.winRatePct, 1)}% · profit factor {num(net.profitFactor, 2)} · expectancy{" "}
           {pips(net.expectancyPipsPerTrade, 2)} per trade · longest losing streak{" "}
-          {net.longestLosingStreak} trades · maximum drawdown{" "}
+          {streak ? streak.byExitTime : net.longestLosingStreak} trades
+          {streak ? <sup>†</sup> : null} · maximum drawdown{" "}
           <strong className="font-semibold">{pips(net.maxDrawdownPips)}</strong> (
           {num(net.maxDrawdownR, 2)}R).
         </p>
+        {streak ? (
+          <p className="mt-2 text-xs text-rose-800">
+            <sup>†</sup> Ordered by exit time — the order a realised-equity curve is read in, and the
+            ordering convention frozen for this run (exit bar, ties by trigger bar, then pair). The
+            results file&rsquo;s own <span className="font-mono">longestLosingStreak</span> field says{" "}
+            {net.longestLosingStreak}, which is the <em>entry</em>-time ordering of the same{" "}
+            {group(String(net.trades))} trades; the independent replay gets {streak.byExitTime} on exit
+            time and {streak.byEntryTime} on entry time. Both counts are computed from the stored
+            per-trade rows and are shown here rather than one being silently picked.
+          </p>
+        ) : null}
         <p className="mt-3 text-sm text-rose-900">
           It lost money in {measuredYears - positiveYears} of the {measuredYears} calendar years
           measured. A lower-frequency variant was tested because the per-trade cost argument pointed
@@ -408,7 +422,9 @@ function DailyBacktestPage() {
                 <Td right>{group(String(gross.trades))}</Td>
                 <Td right className={tone(gross.totalPips)}>{num(gross.totalPips)}</Td>
                 <Td right className={tone(gross.totalR)}>{num(gross.totalR, 2)}</Td>
-                <Td right>{num(gross.winRatePct, 1)}%</Td>
+                <Td right>
+                  {num(gross.winRatePct, 1)}%<sup>‡</sup>
+                </Td>
                 <Td right>{num(gross.profitFactor, 2)}</Td>
                 <Td right>{num(gross.maxDrawdownPips)}</Td>
               </tr>
@@ -419,13 +435,17 @@ function DailyBacktestPage() {
                   </span>
                   <div className="text-xs text-slate-600">
                     Fills at the trigger bar&rsquo;s own close, which is only knowable once that bar
-                    has ended. Nobody can trade this. It is a ceiling, and it is{" "}
-                    {num(opt.totalPips)} pips — worse than the headline, so nothing is being
-                    suppressed by the conservative fill.
+                    has ended. Nobody can trade this. It is a ceiling —{" "}
+                    {num(opt.totalPips)} pips as stored, a figure the independent replay could not
+                    reproduce (see the note below), so it is shown as unverified rather than as a
+                    result.
                   </div>
                 </Td>
                 <Td right>{group(String(opt.trades))}</Td>
-                <Td right className={tone(opt.totalPips)}>{num(opt.totalPips)}</Td>
+                <Td right className={tone(opt.totalPips)}>
+                  {num(opt.totalPips)}
+                  <sup>§</sup>
+                </Td>
                 <Td right className={tone(opt.totalR)}>{num(opt.totalR, 2)}</Td>
                 <Td right>{num(opt.winRatePct, 1)}%</Td>
                 <Td right>{num(opt.profitFactor, 2)}</Td>
@@ -435,12 +455,35 @@ function DailyBacktestPage() {
           </table>
         </div>
         <p className="mt-3">
-          The deliberately flattering variant — the one no one could have executed — reaches{" "}
-          <strong className="font-semibold">
-            {pips(opt.totalPips)} / {num(opt.totalR, 2)}R
-          </strong>
-          . It is worse than the achievable figure, not better. Whatever killed this ruleset, it was
-          not the pessimism of the fill assumption.
+          <sup>‡</sup> <strong className="font-semibold">Zero-cost win rate, stated two ways.</strong>{" "}
+          {num(gross.winRatePct, 1)}% counts the four exact break-even trades — one per pair, all in
+          the 2003&ndash;2004 flat-OHLC region where the mid open lands exactly on the stop — as
+          losses. The frozen convention treats a break-even as its own class, excluded from the
+          denominator, which makes the zero-cost win rate <strong className="font-semibold">32.35%</strong>{" "}
+          (66 of 204). Pips and profit factor are identical under either classification, because those
+          four trades contribute zero to both. The independent replay found the same four trades on the
+          same four dates.
+        </p>
+        <p className="mt-3">
+          <sup>§</sup> <strong className="font-semibold">This figure is not verified, and the
+          ceiling claim it was used for does not survive the check.</strong> The independent replay
+          reproduces the headline and zero-cost rows trade for trade, but it cannot reach{" "}
+          {num(opt.totalPips)} for this variant under either reading of a convention the frozen
+          documents never fixed — where a <em>rule</em> exit closes when fills happen at the trigger
+          close. Exiting at the mid close of the bar whose open the headline fills on gives{" "}
+          <strong className="font-semibold">&minus;2,348.1 pips (&minus;4.05R)</strong>; exiting at the
+          mid close of the bar that triggered the rule exit gives{" "}
+          <strong className="font-semibold">&minus;2,408.2 pips (&minus;4.00R)</strong>. The stored
+          figure is also internally odd: it is worse than the team&rsquo;s own zero-cost row, and its
+          win/loss split is identical to the headline&rsquo;s, which an upper bound that removes the
+          spread should not be. So: <strong className="font-semibold">the stored{" "}
+          {num(opt.totalPips)} is unverified</strong>, and the earlier sentence on this page that it is
+          &ldquo;worse than the achievable figure, not better&rdquo; is withdrawn — under both replay
+          readings the ceiling is <em>better</em> than the achievable headline, as an upper bound
+          should be. What still holds is the part that matters: under both replay readings the ceiling
+          is still a loss (&minus;2,348.1 and &minus;2,408.2 pips), so the conclusion drawn from it —
+          that nothing here is being suppressed by the pessimistic fill assumption — stands, and now
+          rests on figures someone else computed rather than on the stored one.
         </p>
       </Section>
 
@@ -515,6 +558,22 @@ function DailyBacktestPage() {
           {signed(dec.inR.grossEdgeR, 3)}R gross, {num(dec.inR.spreadPaidR, 3)}R cost,{" "}
           {signed(dec.inR.netR, 3)}R net.
         </p>
+        {entrySpread ? (
+          <p className="mt-2 text-xs text-slate-600">
+            <strong className="font-semibold">Mean spread on the entry-fill bars, stated precisely.</strong>{" "}
+            Over the {group(String(entrySpread.n))} entry-fill bars the trade-weighted mean is{" "}
+            <span className="font-mono">{num(entrySpread.tradeWeighted, 4)}</span> pips — computed here
+            from the stored per-trade <span className="font-mono">spreadAtFillPips</span> rows, and the
+            figure the independent replay reproduced. The results file&rsquo;s{" "}
+            <span className="font-mono">meanSpreadAtEntryFillPips</span> field stores{" "}
+            <span className="font-mono">{num(entrySpread.perPairUnweighted, 3)}</span>, which is the{" "}
+            <em>unweighted</em> mean of the four per-pair means and so gives a 48-trade pair the same
+            weight as a 63-trade pair. The two differ by{" "}
+            {num(Math.abs(entrySpread.perPairUnweighted - entrySpread.tradeWeighted), 3)} pips and
+            neither moves a pip of result or a profit factor; the label is corrected here rather than
+            the field being quietly re-described.
+          </p>
+        ) : null}
       </Section>
 
       {/* ── held-out ────────────────────────────────────────────────────── */}
@@ -952,20 +1011,49 @@ function DailyBacktestPage() {
           over anything here.
         </p>
         <p className="mt-2 text-sm text-slate-700">
-          Every figure above is read from the daily run&rsquo;s results file, which is kept and can be
+          Every figure above is read from the daily run&rsquo;s results file, or computed from its
+          stored per-trade rows and labelled as computed where it appears. The file is kept and can be
           re-checked against this page. Where a number is negative, it is shown negative.
         </p>
         <p className="mt-3 text-sm text-slate-700">
           <strong className="font-semibold">
-            Our own measurement, not an independent verification.
+            Independently replayed: the headline and zero-cost figures reproduce exactly.
           </strong>{" "}
-          Every figure here has been checked for internal consistency: it matches the stored results
-          file, and the daily run is driven by the same rule and indicator code the dashboard runs.
-          That is self-consistency, and it is not the same thing as independent confirmation. A
-          second, independently written replay of this ruleset over the same stored data &mdash;
-          compared trade by trade &mdash; is a planned item that has <em>not</em> been done. Until it
-          is, treat these numbers as this project&rsquo;s own measurement, reported honestly, and not
-          as verified by anyone else.
+          A second implementation of this ruleset — written from the frozen specification and the
+          written-down conventions, and which never read this project&rsquo;s engine — replayed the
+          same stored data and was written and hashed <em>before</em> this project&rsquo;s results file
+          was opened. It produced{" "}
+          <strong className="font-semibold">
+            {num(net.trades, 0)} trades, {num(net.totalPips)} pips, profit factor{" "}
+            {num(net.profitFactor, 2)}
+          </strong>{" "}
+          on the achievable variant and{" "}
+          <strong className="font-semibold">
+            {num(gross.totalPips)} pips, profit factor {num(gross.profitFactor, 2)}
+          </strong>{" "}
+          at zero cost — the same totals to the last printed digit — and{" "}
+          <strong className="font-semibold">
+            all {group(String(net.trades))} trades match this project&rsquo;s stored record
+            field-for-field
+          </strong>{" "}
+          on eleven fields each: trigger bar, fill bar, exit bar, side, fill price, exit price, stop,
+          target, exit reason, pips and R. Per-pair totals, total R, drawdown, the exit mix and the
+          held-out block reconcile too.
+        </p>
+        <p className="mt-2 text-sm text-slate-700">
+          What that does <em>not</em> mean: it is an independent <em>replay</em>, not a blind one —
+          both implementations were written from the same written rules, so this establishes that the
+          figures are not artefacts of this project&rsquo;s code, not that the rules are right. It says
+          nothing about swap, slippage beyond the quoted spread, commission or sizing, which are
+          excluded from both. And it found four things that did not reconcile, all of them now stated
+          above rather than dropped: the mean-spread label (the stored 6.361 is an unweighted average
+          of four per-pair means; the trade-weighted figure over the 208 entry-fill bars is 6.3260),
+          the combined longest losing streak (18 on an entry-time ordering, 17 on exit time), the
+          zero-cost win rate with four break-evens counted as losses (31.7%, against 32.35% with them
+          excluded), and the optimistic upper-bound variant, which the replay could not reproduce at
+          all and which is now labelled unverified on this page. None of the four changes a pip total
+          or a profit factor; the optimistic variant changes the sentence that used to sit next to it,
+          and that sentence has been withdrawn.
         </p>
       </section>
 
