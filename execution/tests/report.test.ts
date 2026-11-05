@@ -230,7 +230,7 @@ test("the text version states every event with the record id it came from", () =
   assert.match(text, /Execution mode: automatic/);
   assert.match(text, /Orders submitted: 1 \(records 1\)\. An order request is not a trade\./);
   assert.match(text, /Fills confirmed by the broker: 1 \(records 2\)\./);
-  assert.match(text, /seq 2: EUR_USD -10000 units filled at 1\.10050 \(trade 111, order msig-aaa\)/);
+  assert.match(text, /seq 2: EUR_USD -10000 units filled at 1\.10050 \(trade 111, order msig-aaa, origin not stated in the record\)/);
   assert.match(text, /Refusals: 1 \(records 3\)/);
   assert.match(text, /GUARD_MAX_POSITIONS/);
   assert.match(text, /Errors: 1 \(records 4\)/);
@@ -242,6 +242,58 @@ test("the text version states every event with the record id it came from", () =
   assert.ok(text.includes(NO_TRANSPORT_DETAIL), "the exact 'nothing sent' sentence must appear in the report");
   // The account id that appears in the raw record must not appear in the rendered report.
   assert.equal(text.includes(ACCOUNT_ID_IN_A_RECORD), false, "an account id must never reach the report");
+});
+
+/**
+ * The origin label reaches the report. A CONNECTION_TEST order must be readable as such, and
+ * must not be readable as the invented ruleset trading — the two are different strings in the
+ * record and must stay different strings in the text a person reads.
+ */
+test("every fill and order request is labelled with its origin, and the two labels differ", () => {
+  function withOrigin(origin: string): LedgerLike[] {
+    return [
+      {
+        seq: 1,
+        recordedAt: at(0),
+        kind: "ORDER_REQUESTED",
+        signalId: "sig-1",
+        orderKey: "msig-aaa",
+        state: "REQUESTED",
+        payload: { proposal: { origin }, request: { body: { order: { type: "MARKET", instrument: "EUR_USD", units: "1" } } } },
+      },
+      {
+        seq: 2,
+        recordedAt: at(1),
+        kind: "FILL",
+        signalId: "sig-1",
+        orderKey: "msig-aaa",
+        state: "FILLED",
+        payload: { tradeId: "111", units: "1", price: "1.10050" },
+      },
+    ];
+  }
+  const build = (origin: string) =>
+    buildReport({
+      records: withOrigin(origin),
+      broker: broker({ openTrades: [] }),
+      config,
+      chain: { ok: true, recordCount: 2, firstBreak: null },
+      notification: noNotification,
+      generatedAt: at(10),
+      trigger: "EVENT",
+    });
+
+  const connection = build("CONNECTION_TEST");
+  const ruleset = build("INVENTED_RULESET_TEST");
+  const connectionText = renderReportText(connection);
+  const rulesetText = renderReportText(ruleset);
+
+  assert.equal(connection.fills[0]!.origin, "CONNECTION_TEST");
+  assert.equal(ruleset.fills[0]!.origin, "INVENTED_RULESET_TEST");
+  assert.match(connectionText, /seq 1: EUR_USD 1 units — origin CONNECTION_TEST\./);
+  assert.match(connectionText, /origin CONNECTION_TEST\)\./);
+  assert.match(rulesetText, /seq 1: EUR_USD 1 units — origin INVENTED_RULESET_TEST\./);
+  assert.equal(connectionText.includes("INVENTED_RULESET_TEST"), false, "a connection test must never read as the ruleset trading");
 });
 
 test("a FILL-kind record without the broker's confirmation is never counted as a fill", () => {
