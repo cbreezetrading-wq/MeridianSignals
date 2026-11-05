@@ -173,6 +173,29 @@ export function riskAtPrice(args: {
   return Math.abs(args.units) * Math.abs(args.entryPrice - args.stopPrice) * args.quoteToAccountRate;
 }
 
+/**
+ * The daily loss guard, as one pure function so it can be tested against a CARRIED
+ * day state. The threshold is a fraction of the day's OPENING NAV, not of the current
+ * NAV: a day that is already down must not get a smaller budget, and a ledger rotation
+ * must not hand the day a fresh one (lib/rotation.ts carries the opening NAV and the
+ * realised P/L forward).
+ */
+export function dailyLossBudget(args: {
+  openingNav: number;
+  realisedPnl: number;
+  unrealisedPnl: number;
+  thresholdPct: number;
+}): { dayPnl: number; threshold: number; breached: boolean; remainingBeforeThreshold: number } {
+  const dayPnl = args.realisedPnl + args.unrealisedPnl;
+  const threshold = (args.openingNav * args.thresholdPct) / 100;
+  return {
+    dayPnl,
+    threshold,
+    breached: dayPnl <= -threshold,
+    remainingBeforeThreshold: -threshold - dayPnl,
+  };
+}
+
 /* --------------------------------------------------------------- record + alerts */
 
 export type RealisedRiskRecord = {

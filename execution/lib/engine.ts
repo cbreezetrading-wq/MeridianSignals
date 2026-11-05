@@ -39,7 +39,8 @@ import {
   type InstrumentMeta,
   type Quote,
 } from "./instruction.ts";
-import { appendRealisedRisk, appendUnmeasuredRisk, computeRealisedRisk, riskAtPrice, RISK_EPSILON } from "./risk.ts";
+import { appendRealisedRisk, appendUnmeasuredRisk, computeRealisedRisk, riskAtPrice, RISK_EPSILON, dailyLossBudget } from "./risk.ts";
+import { carriedForwardFromRecord, SUBMISSION_KINDS } from "./rotation.ts";
 
 export const MERIDIAN_TAG = "MERIDIAN-PRACTICE-TEST";
 export const MANAGED_ID_PREFIX = "msig-";
@@ -127,6 +128,10 @@ export async function managedTradeIdsFromRecord(): Promise<Set<string>> {
     const id = p.tradeId ?? p.tradeOpened?.tradeID;
     if (id !== undefined && id !== null) ids.add(String(id));
   }
+  // Trade ids from archived segments. Without this a rotation would make a trade Meridian
+  // opened before the rotation invisible to `isManaged()`, so it would be treated as an
+  // external manual trade — the opposite of the truth. See lib/rotation.ts.
+  for (const id of (await carriedForwardFromRecord()).knownTradeIds) ids.add(id);
   return ids;
 }
 
@@ -310,17 +315,50 @@ export async function writePause(paused: boolean, reason: string | null): Promis
 
 /* -------------------------------------------------------------- daily state */
 
-export async function dayStartNav(nav: number): Promise<{ date: string; nav: number }> {
+/**
+ * The day's opening NAV — the base the daily loss threshold is measured against.
+ *
+ * `source` says where the value came from, so a report can state it rather than assert it:
+ *  - DAY_STATE_FILE: read back from a value written earlier today (the normal case);
+ *  - FIRST_READ_OF_DAY: this is the first account read of the day, so the current NAV IS
+ *    the opening NAV;
+ *  - LEDGER_ROTATION: written by a rotation, which carries today's opening NAV forward
+ *    (lib/rotation.ts) instead of letting a new file start the day again at the current NAV.
+ */
+export async function dayStartNav(nav: number): Promise<{ date: string; nav: number; source: string }> {
   const today = new Date().toISOString().slice(0, 10);
   try {
     const raw = JSON.parse(await readFile(dayStatePath(), "utf8"));
-    if (raw.date === today && Number.isFinite(raw.nav)) return { date: today, nav: raw.nav };
+    if (raw.date === today && Number.isFinite(raw.nav)) return { date: today, nav: raw.nav, source: String(raw.source ?? "DAY_STATE_FILE") };
   } catch {
     /* fall through */
   }
+  await writeDayState({ date: today, nav, source: "FIRST_READ_OF_DAY" });
+  return { date: today, nav, source: "FIRST_READ_OF_DAY" };
+}
+
+/**
+ * Write the day state. Refuses to overwrite a value for the SAME day that is already on
+ * disk unless `replace` is set: an opening NAV, once taken, is not re-taken.
+ */
+export async function writeDayState(state: {
+  date: string;
+  nav: number;
+  source: string;
+  carriedFrom?: string;
+  realisedAtCutover?: number;
+  openingNavFrom?: string | null;
+}, opts: { replace?: boolean } = {}): Promise<void> {
   await mkdir(executionDir(), { recursive: true });
-  await writeFile(dayStatePath(), JSON.stringify({ date: today, nav }, null, 2), "utf8");
-  return { date: today, nav };
+  if (!opts.replace) {
+    try {
+      const raw = JSON.parse(await readFile(dayStatePath(), "utf8"));
+      if (raw.date === state.date && Number.isFinite(raw.nav)) return;
+    } catch {
+      /* no existing state: write it */
+    }
+  }
+  await writeFile(dayStatePath(), JSON.stringify({ ...state, setAt: new Date().toISOString() }, null, 2), "utf8");
 }
 
 /* ------------------------------------------------------------------ evaluate */
@@ -533,10 +571,16 @@ export async function evaluate(
   const day = await dayStartNav(account.nav);
   const realised = await realisedToday();
   const unrealisedManaged = managedOpen.reduce((sum, t) => sum + Number(t.unrealizedPL ?? 0), 0);
-  const dayPnl = realised + unrealisedManaged;
-  const threshold = (day.nav * Number(settings.values.dailyLossThresholdPct.value)) / 100;
-  if (dayPnl <= -threshold) {
-    reasons.push(`GUARD_DAILY_LOSS: day P/L ${dayPnl.toFixed(2)} ${account.currency} has reached the daily threshold -${threshold.toFixed(2)} (${String(settings.values.dailyLossThresholdPct.value)}% of opening NAV ${day.nav.toFixed(2)})`);
+  const budget = dailyLossBudget({
+    openingNav: day.nav,
+    realisedPnl: realised,
+    unrealisedPnl: unrealisedManaged,
+    thresholdPct: Number(settings.values.dailyLossThresholdPct.value),
+  });
+  const dayPnl = budget.dayPnl;
+  const threshold = budget.threshold;
+  if (budget.breached) {
+    reasons.push(`GUARD_DAILY_LOSS: day P/L ${dayPnl.toFixed(2)} ${account.currency} has reached the daily threshold -${threshold.toFixed(2)} (${String(settings.values.dailyLossThresholdPct.value)}% of opening NAV ${day.nav.toFixed(2)}, source ${day.source ?? "day-state"})`);
   }
 
   const executablePrice = instruction.direction === "long" ? quote.ask : quote.bid;
@@ -716,15 +760,19 @@ export function buildOrderPayload(
 
 export type DuplicateCheck = {
   duplicate: boolean;
-  foundIn: "RECORD" | "BROKER_ORDER" | "BROKER_TRADE" | null;
+  /** RECORD = the live segment; RECORD_ARCHIVE = carried forward from a closed segment. */
+  foundIn: "RECORD" | "RECORD_ARCHIVE" | "BROKER_ORDER" | "BROKER_TRADE" | null;
   evidence: unknown;
 };
 
 /**
- * Duplicate prevention, in two independent places:
- *  - the append-only record (works even if the broker has forgotten the order);
+ * Duplicate prevention, in three independent places:
+ *  - the live segment of the append-only record (works even if the broker has forgotten
+ *    the order);
+ *  - the order keys carried forward from every CLOSED segment (a rotation must not make a
+ *    previously submitted key look new — see lib/rotation.ts);
  *  - the broker itself (works even if the record is lost).
- * Either one finding the key means no second order is sent.
+ * Any one finding the key means no second order is sent.
  */
 export async function checkDuplicate(client: Client, orderKey: string, _signalId: string): Promise<DuplicateCheck> {
   const { byOrderKey } = await replay();
@@ -734,6 +782,26 @@ export async function checkDuplicate(client: Client, orderKey: string, _signalId
   );
   if (submitted.length > 0) {
     return { duplicate: true, foundIn: "RECORD", evidence: submitted.map((r) => ({ seq: r.seq, kind: r.kind, state: r.state, recordedAt: r.recordedAt })) };
+  }
+
+  // Carried forward from archived segments. Same test applied to the same kinds, so the
+  // guarantee is unchanged by rotation rather than re-implemented for it.
+  const carried = await carriedForwardFromRecord();
+  const archived = carried.orderKeys.find((k) => k.orderKey === orderKey);
+  if (archived && archived.kinds.some((kind) => (SUBMISSION_KINDS as readonly string[]).includes(kind))) {
+    return {
+      duplicate: true,
+      foundIn: "RECORD_ARCHIVE",
+      evidence: {
+        orderKey,
+        kinds: archived.kinds.filter((kind) => (SUBMISSION_KINDS as readonly string[]).includes(kind)),
+        state: archived.state,
+        tradeId: archived.tradeId,
+        lastRecordedAt: archived.lastRecordedAt,
+        carriedFrom: carried.sources,
+        note: "this key was submitted in a closed segment that has been archived; the checkpoint record (LEDGER_ROTATION, seq 1 of the live segment) carries it forward",
+      },
+    };
   }
 
   const ordersRes = await client.orders("ALL");
@@ -1394,6 +1462,12 @@ export async function realisedToday(): Promise<number> {
     const pl = Number((r.payload as any)?.realizedPL ?? 0);
     if (Number.isFinite(pl)) sum += pl;
   }
+  // Today's closes that happened BEFORE a rotation are in an archived segment. The
+  // checkpoint carries them per date, so the day's loss budget is not reset to zero by
+  // starting a new file (lib/rotation.ts).
+  const carried = await carriedForwardFromRecord();
+  const carriedToday = Number(carried.realisedByDay[today] ?? 0);
+  if (Number.isFinite(carriedToday)) sum += carriedToday;
   return sum;
 }
 
