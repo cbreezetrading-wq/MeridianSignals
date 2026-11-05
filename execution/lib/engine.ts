@@ -607,6 +607,10 @@ export async function evaluate(
       meta: instrumentMeta,
       riskPerTradePct: riskPct,
       quotes,
+      // Explicit, never inferred: absent means RISK. BROKER_MINIMUM reaches this point only
+      // for origin CONNECTION_TEST — validateInstruction (step 4) has already refused it for
+      // any other origin, so it cannot be smuggled onto a real trade.
+      sizingMode: instruction.sizingMode ?? "RISK",
     });
     if (!sizing.ok) reasons.push(`SIZING_${sizing.reason}: ${sizing.detail}`);
   }
@@ -656,6 +660,12 @@ export async function evaluate(
     settingsProfile: settings.profileLabel,
     settingsProfileLabel: settings.profileLabel === "DEMO-TEST" ? DEMO_TEST_LABEL : settings.profileLabel,
     origin: instruction.origin,
+    /** Which sizing mode produced `units`, and what it means. Stated, never inferred. */
+    sizingMode: sizing.sizingMode,
+    sizingModeNote:
+      sizing.sizingMode === "BROKER_MINIMUM"
+        ? "BROKER_MINIMUM: the units are the instrument's own minimumTradeSize, not the risk budget. Permitted only for origin CONNECTION_TEST, whose purpose is to prove the order path. Risk and notional below are derived FROM these units."
+        : "RISK: the units are derived from the stop distance, NAV and riskPerTradePct — the only mode a real trade may use.",
     strategy: { id: strategy.id, version: strategy.version, label: strategy.label, enabled: strategy.enabled, note: strategy.note },
     instrument: instruction.instrument,
     direction: instruction.direction,
@@ -672,8 +682,10 @@ export async function evaluate(
     stopPrice: instruction.stopPrice,
     takeProfitPrice: instruction.takeProfitPrice,
     stopDistancePips: Number((sizing.riskPerUnitQuote / pipSize(instruction.instrument)).toFixed(1)),
-    /** units × far-side stop distance × conversion: the risk being budgeted. */
-    riskAccountCurrency: Number(sizing.riskAccountCurrency.toFixed(2)),
+    /** units × far-side stop distance × conversion: the risk being budgeted. 4 dp, so a
+     * one-unit connection test's risk (a fraction of a cent) is not printed as 0.00 and then
+     * compared against a realised figure it cannot equal. */
+    riskAccountCurrency: Number(sizing.riskAccountCurrency.toFixed(4)),
     riskPctOfNav: Number(sizing.riskPctOfNav.toFixed(4)),
     riskPctSetting: riskPct,
     riskSettingSource: settings.values.riskPerTradePct.source,
@@ -719,6 +731,13 @@ export async function evaluate(
  * Build the v20 order body. Called only from evaluate(), and it re-asserts the
  * practice target as its very last act before returning, so a caller cannot obtain a
  * submittable payload without the interlock having run.
+ *
+ * The broker-visible `comment` carries the instruction's origin, so the label travels with
+ * the order itself and not only with our record: an order submitted for a connection test
+ * reads `CONNECTION_TEST ...` at the broker, which is a different string from the invented
+ * ruleset's `INVENTED_RULESET_TEST ...`. The sizing mode is in the proposal and the record
+ * (it is not part of the broker's comment, whose 120-character budget is already spent on
+ * origin, strategy and signal id).
  */
 export function buildOrderPayload(
   instruction: SignalInstruction,
@@ -977,7 +996,7 @@ async function submitSignalUnlocked(
     strategyVersion: instruction.strategyVersion,
     orderKey,
     state: "RECEIVED",
-    payload: { instruction, origin: instruction.origin, mode: settings.mode },
+    payload: { instruction, origin: instruction.origin, sizingMode: instruction.sizingMode ?? "RISK", mode: settings.mode },
   });
 
   // Duplicate check BEFORE anything else that could refuse the signal.

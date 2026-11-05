@@ -9,14 +9,23 @@
  * VERIFICATION instruction that is labelled as exactly that everywhere it appears
  * (record, dashboard, evidence):
  *
- *   - origin:  INVENTED_RULESET_TEST   (the invented ruleset may originate Practice
- *                                      orders for connection testing, and nothing else)
+ *   - origin:  CONNECTION_TEST   — a deliberate one-off whose only purpose is to prove the
+ *                                  order path (submit, protection attached, read-back). This
+ *                                  is a DIFFERENT label from INVENTED_RULESET_TEST on
+ *                                  purpose: a connection test must never be readable as the
+ *                                  ruleset trading, and vice versa. Nothing here is a rule
+ *                                  firing.
  *   - basis:   "CONNECTION_VERIFICATION" — explicitly not a rule firing
+ *   - size:    sizingMode BROKER_MINIMUM — one unit at the instrument's own
+ *              minimumTradeSize, with the risk and notional derived from those units. The
+ *              point is to prove the path works, not to carry a sized position's risk.
+ *              Every other check (spread, deviation, exposure, max positions, daily loss,
+ *              duplicate, chain, interlock, pre-submit risk re-check) runs unchanged.
  *   - geometry: the ruleset's OWN stop and target construction, 1.5 x ATR(14) and
  *               3.0 x ATR(14) from the entry, computed from the newest complete H1 bar
- *               on the owner's own OANDA feed. So the order that results is sized and
- *               protected exactly as a real one would be; only its reason for existing
- *               is artificial, and that is stated.
+ *               on the owner's own OANDA feed. So the order that results is protected
+ *               exactly as a real one would be; only its reason for existing is
+ *               artificial, and that is stated.
  *
  * The direction is taken from the ruleset's trend filter (EMA50 vs EMA200) at the last
  * complete bar, so it is at least a deterministic reading of the same data rather than
@@ -84,15 +93,20 @@ export async function buildConnectionVerificationInstruction(args: {
     existingPositionRule: "do not add to an open position in the same instrument; one Meridian-managed position per instrument at most",
     oppositeSignalRule: "an opposite signal never reverses in place; the existing position is closed by its own exit rules first",
     repeatEntryRule: "one entry per signal id; the idempotency key makes a resubmission of the same signal a no-op",
-    origin: "INVENTED_RULESET_TEST",
+    origin: "CONNECTION_TEST",
+    sizingMode: "BROKER_MINIMUM",
   };
 
   return {
     instruction,
     basis: {
       basis: "CONNECTION_VERIFICATION",
+      origin: "CONNECTION_TEST",
+      sizingMode: "BROKER_MINIMUM",
+      sizingNote:
+        "the order is one unit — the instrument's own minimumTradeSize — because its purpose is to prove the order path, not to carry a sized position's risk. Risk and notional are derived from those units, and every other pre-trade check runs unchanged.",
       statement:
-        "No entry rule was firing on the invented H1 ruleset at build time (all four pairs FLAT). This instruction exists to exercise the order path end to end. It is NOT a rule firing and NOT a trading recommendation. Its stop and target use the ruleset's own 1.5xATR / 3.0xATR construction.",
+        "No entry rule was firing on the invented H1 ruleset at build time (all four pairs FLAT). This instruction exists to exercise the order path end to end. It is NOT a rule firing and NOT a trading recommendation, and its origin is CONNECTION_TEST rather than INVENTED_RULESET_TEST so the two can never be read as each other. Its stop and target use the ruleset's own 1.5xATR / 3.0xATR construction.",
       instrument: args.instrument,
       sourceBar: { time: new Date(last.t * 1000).toISOString(), close: last.c },
       atr14,

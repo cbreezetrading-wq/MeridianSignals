@@ -140,6 +140,11 @@ export type ReportFill = {
   instrument: string | null;
   units: string | null;
   price: string | null;
+  /**
+   * Why the order existed: INVENTED_RULESET_TEST, CONNECTION_TEST or OWNER_METHOD, taken from
+   * the record's own instruction/proposal. Null when the record does not say — never guessed.
+   */
+  origin: string | null;
   /** True only because the record carries the broker's own trade id and fill price. */
   brokerConfirmed: true;
   recordedAt: string;
@@ -470,6 +475,8 @@ export function buildReport(input: BuildReportInput): ReportComplete {
         instrument: str(order.instrument),
         units: str(order.units),
         type: str(order.type),
+        /** Why this order existed, straight from the record. Null when the record does not say. */
+        origin: str(p.proposal?.origin),
         recordedAt: r.recordedAt,
         note: "an order REQUEST sent to the broker — not a trade. Only a broker-confirmed fill below is a trade.",
       };
@@ -479,11 +486,30 @@ export function buildReport(input: BuildReportInput): ReportComplete {
   // The instrument of a fill is not always on the FILL record itself; the ORDER_REQUESTED
   // record for the same order key always names it. The map is built over the WHOLE record so
   // a fill whose request fell outside this window still resolves.
-  const orderInfoByKey = new Map<string, { instrument: string | null; units: string | null }>();
+  //
+  // The same map carries the instruction's ORIGIN, so every fill is labelled with why its
+  // order existed (INVENTED_RULESET_TEST / CONNECTION_TEST / OWNER_METHOD). INSTRUCTION_RECEIVED
+  // is the fallback: it is written before any evaluation, so it survives a request that was
+  // refused before a proposal existed.
+  const orderInfoByKey = new Map<string, { instrument: string | null; units: string | null; origin: string | null }>();
   for (const r of records) {
-    if (r.kind !== "ORDER_REQUESTED" || !r.orderKey) continue;
-    const order = payloadOf(r).request?.body?.order ?? {};
-    orderInfoByKey.set(r.orderKey, { instrument: str(order.instrument), units: str(order.units) });
+    if (!r.orderKey) continue;
+    const p = payloadOf(r);
+    if (r.kind === "ORDER_REQUESTED") {
+      const order = p.request?.body?.order ?? {};
+      orderInfoByKey.set(r.orderKey, {
+        instrument: str(order.instrument),
+        units: str(order.units),
+        origin: str(p.proposal?.origin) ?? orderInfoByKey.get(r.orderKey)?.origin ?? null,
+      });
+    } else if (r.kind === "INSTRUCTION_RECEIVED" && !orderInfoByKey.get(r.orderKey)?.origin) {
+      const prior = orderInfoByKey.get(r.orderKey);
+      orderInfoByKey.set(r.orderKey, {
+        instrument: prior?.instrument ?? null,
+        units: prior?.units ?? null,
+        origin: str(p.origin ?? p.instruction?.origin),
+      });
+    }
   }
   const fills: ReportFill[] = [];
   const unconfirmedFillRecords: Array<{ seq: number; reason: string; recordedAt: string }> = [];
@@ -512,6 +538,7 @@ export function buildReport(input: BuildReportInput): ReportComplete {
       instrument: str(p.instrument ?? p.ackJson?.orderFillTransaction?.instrument ?? p.tradeOpened?.instrument ?? orderInfoByKey.get(r.orderKey ?? "")?.instrument),
       units,
       price,
+      origin: str(p.origin ?? p.proposal?.origin) ?? orderInfoByKey.get(r.orderKey ?? "")?.origin ?? null,
       brokerConfirmed: true,
       recordedAt: r.recordedAt,
     });
@@ -957,6 +984,9 @@ export function renderReportText(report: ReportJson): string {
   add();
   add("## What happened in this window");
   add(`Orders submitted: ${report.counts.orderRequests}${report.sources.orderRequests.length ? ` (records ${report.sources.orderRequests.join(", ")})` : ""}. An order request is not a trade.`);
+  for (const o of report.orderRequests) {
+    add(`  · seq ${o.seq}: ${o.instrument ?? "?"} ${o.units ?? "?"} units — origin ${o.origin ?? "not stated in the record"}.`);
+  }
   add(`Fills confirmed by the broker: ${report.counts.brokerConfirmedFills + report.counts.partialFills}${report.sources.fills.length ? ` (records ${report.sources.fills.join(", ")})` : ""}.`);
   if (report.reconciliation.enteredAtBrokerWithoutFillRecord.length) {
     add(
@@ -965,7 +995,7 @@ export function renderReportText(report: ReportJson): string {
     );
   }
   for (const f of report.fills) {
-    add(`  · seq ${f.seq}: ${f.instrument ?? "?"} ${f.units ?? "?"} units filled at ${f.price} (trade ${f.tradeId}, order ${f.orderKey ?? "?"}).`);
+    add(`  · seq ${f.seq}: ${f.instrument ?? "?"} ${f.units ?? "?"} units filled at ${f.price} (trade ${f.tradeId}, order ${f.orderKey ?? "?"}, origin ${f.origin ?? "not stated in the record"}).`);
   }
   for (const u of report.unconfirmedFillRecords) add(`  · seq ${u.seq}: NOT counted as a fill — ${u.reason}`);
   add(
