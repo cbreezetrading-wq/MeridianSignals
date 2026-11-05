@@ -58,6 +58,13 @@ export type RecordKind =
   /** Realised risk at the broker fill, recorded next to the budgeted figure. */
   | "REALISED_RISK"
   /**
+   * A ledger segment was closed and a new one opened. This record is seq 1 of the new
+   * segment and carries forward the order keys, known trade ids and per-day realised P/L
+   * of every segment before it, so rotation cannot silently weaken duplicate suppression
+   * or reset the day's loss budget. See lib/rotation.ts.
+   */
+  | "LEDGER_ROTATION"
+  /**
    * A plain-language report was generated. The record carries the report id, the record
    * ids it was built from and what happened to the delivery attempt — including that
    * nothing was sent when no notification channel is configured.
