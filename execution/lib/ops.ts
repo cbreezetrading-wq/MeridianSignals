@@ -40,17 +40,21 @@ export type BrokerState = {
 
 export async function readBrokerState(client: Client): Promise<BrokerState> {
   const errors: string[] = [];
-  const accountRes = await readAccount(client);
+  // The open trades are read BEFORE the account summary so the account poll can carry the
+  // set of open trade ids: a trade closed and another opened between polls keeps the count
+  // the same, and a poll that omits the ids cannot show that anything happened.
+  const trRes = await client.openTrades();
+  const trades = !isTransportFailure(trRes) && trRes.ok ? (trRes.body.trades ?? []) : [];
+  const tradesOk = !isTransportFailure(trRes) && trRes.ok;
+  if (!tradesOk) errors.push("trades: read failed");
+
+  const accountRes = await readAccount(client, tradesOk ? { openTradeIds: trades.map((t: any) => String(t.id)) } : {});
   const account = accountRes.ok ? accountRes.account : null;
   if (!accountRes.ok) errors.push(`account: ${JSON.stringify(accountRes.detail)}`);
 
   const posRes = await client.openPositions();
   const positions = !isTransportFailure(posRes) && posRes.ok ? (posRes.body.positions ?? []) : [];
   if (isTransportFailure(posRes) || !posRes.ok) errors.push("positions: read failed");
-
-  const trRes = await client.openTrades();
-  const trades = !isTransportFailure(trRes) && trRes.ok ? (trRes.body.trades ?? []) : [];
-  if (isTransportFailure(trRes) || !trRes.ok) errors.push("trades: read failed");
 
   const orRes = await client.orders("PENDING");
   const orders = !isTransportFailure(orRes) && orRes.ok ? (orRes.body.orders ?? []) : [];
