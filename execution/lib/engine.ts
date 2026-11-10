@@ -20,7 +20,7 @@
 import { type Client, type BrokerResponse, type BrokerFailure } from "./client.ts";
 import { createHash } from "node:crypto";
 import { PRACTICE_HOST, assertPracticeTarget, interlockStatement } from "./interlock.ts";
-import { appendRecord, replay } from "./record.ts";
+import { appendRecord, replay, readRecords, type ExecutionRecord } from "./record.ts";
 import {
   loadConfigFromDisk,
   type ExecutionConfig,
@@ -228,9 +228,123 @@ export type AccountSnapshot = {
   unrealizedPL: number;
   lastTransactionID: string;
   readAt: string;
+  /** The broker's open trade ids, when the caller read them. Omitted when unknown. */
+  openTradeIds?: string[];
 };
 
-export async function readAccount(client: Client): Promise<{ ok: true; account: AccountSnapshot } | { ok: false; reason: string; detail: unknown }> {
+/**
+ * AN ACCOUNT POLL IS EVIDENCE ONLY WHEN IT SAYS SOMETHING NEW.
+ *
+ * The watcher polls the account every 10 seconds, and each poll used to append an
+ * ACCOUNT_READ record whether or not anything had changed. Measured 2026-11-10: the
+ * record grew ~4.3 MB/day while the account was flat (NAV unchanged, no open trade, no
+ * order), of which ~600 of 636 records were identical account polls — on a disk with
+ * 334 MB free, a few months from filling it and taking the site, the watcher and the
+ * console down with it.
+ *
+ * The rule now, and it is the whole rule:
+ *  - a read is recorded when it differs MATERIALLY from the last recorded read — NAV,
+ *    balance, unrealised P/L, open trade count, or the set of open trade ids;
+ *  - when nothing material has changed, one is recorded at most every 5 minutes, so a
+ *    quiet account still leaves a dated heartbeat rather than silence;
+ *  - the first read is always recorded;
+ *  - NOTHING ELSE IS SUPPRESSED. Every instruction, order, acknowledgement, fill,
+ *    protection, close, refusal and error still appends immediately and is never subject
+ *    to this rule — the throttle is applied in `readAccount` and nowhere else, so it
+ *    cannot touch the append path an execution event uses.
+ *
+ * Comparison is by the named fields only, never by timestamp: two polls of an unchanged
+ * account differ in `readAt` and must still count as the same state.
+ */
+export const ACCOUNT_READ_HEARTBEAT_MS = 5 * 60_000;
+/** One hundredth of a currency unit. Below this, a difference is float noise, not a change. */
+const ACCOUNT_READ_MONEY_EPSILON = 0.0001;
+
+export type AccountReadDecision = {
+  append: boolean;
+  reason: "FIRST_READ" | "MATERIAL_CHANGE" | "HEARTBEAT" | "UNCHANGED" | "UNREADABLE_PREVIOUS";
+  /** The material fields that moved, e.g. ["nav"]. Empty when nothing did. */
+  changed: string[];
+  /** When the current unchanged stretch began; null when this read is itself a change. */
+  unchangedSince: string | null;
+};
+
+function moneyChanged(a: unknown, b: unknown): boolean {
+  const x = Number(a);
+  const y = Number(b);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return String(a) !== String(b);
+  return Math.abs(x - y) > ACCOUNT_READ_MONEY_EPSILON;
+}
+
+/**
+ * A different SET of ids is a change even when the count is the same (one trade closed and
+ * another opened between polls). When either side did not read the ids, the set is unknown
+ * on that side and is not counted as a change — an unknown is not evidence of movement.
+ */
+function tradeIdsChanged(a: unknown, b: unknown): boolean {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  const x = [...new Set(a.map(String))].sort();
+  const y = [...new Set(b.map(String))].sort();
+  if (x.length !== y.length) return true;
+  return x.some((value, index) => value !== y[index]);
+}
+
+/** The material differences between two account reads. Empty means "the same state". */
+export function accountReadChanges(previous: Record<string, unknown> | null, next: Record<string, unknown>): string[] {
+  if (!previous) return ["no previous account read recorded"];
+  const changed: string[] = [];
+  if (moneyChanged(previous.nav, next.nav)) changed.push("nav");
+  if (moneyChanged(previous.balance, next.balance)) changed.push("balance");
+  if (moneyChanged(previous.unrealizedPL, next.unrealizedPL)) changed.push("unrealizedPL");
+  if (Number(previous.openTradeCount) !== Number(next.openTradeCount)) changed.push("openTradeCount");
+  if (tradeIdsChanged(previous.openTradeIds, next.openTradeIds)) changed.push("openTradeIds");
+  return changed;
+}
+
+/**
+ * Should this read be appended? Pure, so the heartbeat boundary can be tested without
+ * waiting five minutes. `previous` is the last ACCOUNT_READ already in the record.
+ */
+export function decideAccountReadAppend(input: {
+  previous: { payload: unknown; recordedAt: string } | null;
+  next: Record<string, unknown>;
+  nowMs?: number;
+  heartbeatMs?: number;
+}): AccountReadDecision {
+  const nowMs = input.nowMs ?? Date.now();
+  const heartbeatMs = input.heartbeatMs ?? ACCOUNT_READ_HEARTBEAT_MS;
+  if (!input.previous) return { append: true, reason: "FIRST_READ", changed: [], unchangedSince: null };
+  const changed = accountReadChanges((input.previous.payload ?? {}) as Record<string, unknown>, input.next);
+  if (changed.length > 0) return { append: true, reason: "MATERIAL_CHANGE", changed, unchangedSince: null };
+  const lastMs = Date.parse(input.previous.recordedAt);
+  // An unreadable timestamp is treated as "long enough": record rather than stay silent.
+  if (!Number.isFinite(lastMs) || nowMs - lastMs >= heartbeatMs) {
+    return { append: true, reason: "HEARTBEAT", changed: [], unchangedSince: input.previous.recordedAt };
+  }
+  return { append: false, reason: "UNCHANGED", changed: [], unchangedSince: input.previous.recordedAt };
+}
+
+/**
+ * When the current run of unchanged reads began: walk back over the recorded account polls
+ * while each still matches `next`, and take the earliest one. Non-account events in between
+ * do not end the stretch — the account state is what is being compared, not the record.
+ */
+function unchangedStretchStart(records: ExecutionRecord[], next: Record<string, unknown>): string | null {
+  let start: string | null = null;
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const record = records[i];
+    if (record.kind !== "ACCOUNT_READ") continue;
+    if (accountReadChanges((record.payload ?? {}) as Record<string, unknown>, next).length > 0) break;
+    start = record.recordedAt;
+  }
+  return start;
+}
+
+export type AccountReadResult =
+  | { ok: true; account: AccountSnapshot; recorded: boolean; recordReason: AccountReadDecision["reason"]; changes: string[] }
+  | { ok: false; reason: string; detail: unknown };
+
+export async function readAccount(client: Client, options: { openTradeIds?: string[] } = {}): Promise<AccountReadResult> {
   const res = await client.summary();
   if (isTransportFailure(res)) return { ok: false, reason: "ACCOUNT_READ_FAILED", detail: res.error };
   if (!res.ok) return { ok: false, reason: "ACCOUNT_READ_FAILED", detail: { status: res.status, text: res.text } };
@@ -249,9 +363,43 @@ export async function readAccount(client: Client): Promise<{ ok: true; account: 
     unrealizedPL: Number(a.unrealizedPL),
     lastTransactionID: String(a.lastTransactionID),
     readAt: new Date().toISOString(),
+    ...(options.openTradeIds ? { openTradeIds: [...new Set(options.openTradeIds.map(String))].sort() } : {}),
   };
-  await appendRecord({ kind: "ACCOUNT_READ", state: "OK", payload: account });
-  return { ok: true, account };
+
+  let decision: AccountReadDecision;
+  let unchangedSince: string | null = null;
+  try {
+    const records = await readRecords();
+    let previous: ExecutionRecord | null = null;
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      if (records[i].kind === "ACCOUNT_READ") {
+        previous = records[i];
+        break;
+      }
+    }
+    decision = decideAccountReadAppend({
+      previous: previous ? { payload: previous.payload, recordedAt: previous.recordedAt } : null,
+      next: account as unknown as Record<string, unknown>,
+    });
+    if (decision.append) unchangedSince = unchangedStretchStart(records, account as unknown as Record<string, unknown>);
+  } catch (error) {
+    // A record we cannot read is not a reason to stay silent: record the read and say so.
+    decision = { append: true, reason: "UNREADABLE_PREVIOUS", changed: [`previous record unreadable: ${String(error)}`], unchangedSince: null };
+  }
+
+  if (decision.append) {
+    await appendRecord({
+      kind: "ACCOUNT_READ",
+      state: "OK",
+      payload: {
+        ...account,
+        readDecision: decision.reason,
+        ...(decision.changed.length > 0 ? { changed: decision.changed } : {}),
+        ...(decision.reason === "HEARTBEAT" ? { unchangedSince: unchangedSince ?? decision.unchangedSince } : {}),
+      },
+    });
+  }
+  return { ok: true, account, recorded: decision.append, recordReason: decision.reason, changes: decision.changed };
 }
 
 export async function readInstruments(client: Client): Promise<Record<string, InstrumentMeta>> {
