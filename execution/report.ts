@@ -127,7 +127,7 @@ export type ReportWindow = {
   fromRecordedAt: string | null;
   toRecordedAt: string;
   /** How the start was chosen. */
-  basis: "RECORD_START" | "PREVIOUS_REPORT" | "EXPLICIT";
+  basis: "RECORD_START" | "PREVIOUS_REPORT" | "EXPLICIT" | "LEDGER_ROTATION";
   description: string;
 };
 
@@ -408,13 +408,30 @@ const str = (value: unknown): string | null => {
 const payloadOf = (record: LedgerLike): Record<string, any> =>
   record.payload && typeof record.payload === "object" ? (record.payload as Record<string, any>) : {};
 
-/** Money for the text version. Never used for the JSON, which keeps the raw numbers. */
+/**
+ * Money for the text version. Never used for the JSON, which keeps the raw numbers.
+ *
+ * Two decimals is the normal rendering, but a NON-ZERO amount must never print as zero:
+ * trade 52's realised P/L of -0.0021 was rendered "-0.00", which reads as no P/L at all.
+ * Anything that would round away at two decimals keeps gaining decimals until two
+ * significant digits show (0.0021 -> "0.0021"), and anything too small even for that is
+ * written in exponential form, which cannot read as zero either.
+ */
 export function money(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "unmeasured";
   const sign = value < 0 ? "-" : "";
   const abs = Math.abs(value);
-  const [whole, cents] = abs.toFixed(2).split(".");
-  return `${sign}${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${cents}`;
+  let decimals = 2;
+  if (abs !== 0 && Number(abs.toFixed(2)) === 0) {
+    decimals = Math.min(8, -Math.floor(Math.log10(abs)) + 1);
+  }
+  const fixed = abs.toFixed(decimals);
+  if (abs !== 0 && Number(fixed) === 0) return `${sign}${abs.toExponential(2)}`;
+  const [whole, fraction] = fixed.split(".");
+  // Extra decimals are there to show a small amount is not zero, not to pad it: 0.00010
+  // reads as 0.0001, while the two decimals every ordinary amount has are always kept.
+  const trimmed = fraction!.length > 2 ? fraction!.replace(/0+$/, "").padEnd(2, "0") : fraction!;
+  return `${sign}${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${trimmed}`;
 }
 
 /**
@@ -435,6 +452,35 @@ export function newReportId(at: Date): string {
 /* ---------------------------------------------------------------- the builder */
 
 /**
+ * Where a report's window starts, given the last seq the previous report covered.
+ *
+ * THE ROTATION PROBLEM. The record was rotated on 2026-11-05 (see
+ * execution/INCIDENT-2026-11-03-chain-break.md): segment 2 opens at seq 1 with a
+ * `LEDGER_ROTATION` checkpoint as its first record, so the seq numbering restarts. A window
+ * start carried over from segment 1 (e.g. 2100) names a sequence this record does not have,
+ * and comparing the two produced a digest reading "records 2101–560" with a window covering
+ * nothing at all — while the state file was advanced to 560 as if all 560 records had been
+ * reported.
+ *
+ * THE RULE. A start beyond the end of the record means the previous report covered a
+ * DIFFERENT segment. When the record carries a `LEDGER_ROTATION` checkpoint, the window
+ * restarts at that checkpoint: everything before it belongs to the archived segment, and
+ * the checkpoint itself is the first record of this one, so it is reported. Without a
+ * checkpoint the start is left alone — a record that shrank with no rotation to explain it
+ * is an integrity problem, and the report says so instead of quietly re-reporting.
+ */
+export function resolveWindowStart(
+  records: LedgerLike[],
+  requestedFromSeq: number,
+): { fromSeq: number; reset: { from: number; checkpointSeq: number } | null } {
+  const toSeq = records.reduce((max, r) => (r.seq > max ? r.seq : max), 0);
+  if (requestedFromSeq <= toSeq) return { fromSeq: requestedFromSeq, reset: null };
+  const checkpoint = records.find((r) => r.kind === "LEDGER_ROTATION");
+  if (!checkpoint) return { fromSeq: requestedFromSeq, reset: null };
+  return { fromSeq: checkpoint.seq - 1, reset: { from: requestedFromSeq, checkpointSeq: checkpoint.seq } };
+}
+
+/**
  * Build the report from stored records and a broker read. Pure: no I/O, no clock, no
  * environment. `generateReport` supplies the inputs; the tests supply their own.
  */
@@ -449,18 +495,28 @@ export function buildReport(input: BuildReportInput): ReportComplete {
     );
   }
   const records = [...input.records].sort((a, b) => a.seq - b.seq);
-  const fromSeq = input.fromSeq ?? 0;
+  const requestedFromSeq = input.fromSeq ?? 0;
+  const { fromSeq, reset } = resolveWindowStart(records, requestedFromSeq);
   const toSeq = records.length ? records[records.length - 1]!.seq : 0;
   const inWindow = records.filter((r) => r.seq > fromSeq && r.seq <= toSeq);
   const firstInWindow = inWindow[0] ?? null;
 
-  const basis: ReportWindow["basis"] = input.windowBasis ?? (fromSeq > 0 ? "PREVIOUS_REPORT" : "RECORD_START");
-  const windowDescription =
-    basis === "PREVIOUS_REPORT"
-      ? `records ${fromSeq + 1}–${toSeq} (after the last record the previous report covered, ${fromSeq})`
-      : basis === "RECORD_START"
-        ? `the whole record so far: ${inWindow.length} record(s) from seq ${firstInWindow?.seq ?? 0} to ${toSeq}`
-        : `records ${fromSeq + 1}–${toSeq}`;
+  const basis: ReportWindow["basis"] = reset
+    ? "LEDGER_ROTATION"
+    : (input.windowBasis ?? (fromSeq > 0 ? "PREVIOUS_REPORT" : "RECORD_START"));
+  const windowDescription = reset
+    ? `records ${fromSeq + 1}–${toSeq} (the window restarted at the LEDGER_ROTATION checkpoint, seq ${reset.checkpointSeq}: ` +
+      `the previous report's last record, ${reset.from}, belongs to the segment archived before it)`
+    : fromSeq > toSeq
+      ? `records ${fromSeq + 1}–${toSeq} — the previous report's last record (${fromSeq}) is BEYOND the end of this record ` +
+        `(${toSeq}) and no LEDGER_ROTATION checkpoint explains it, so this window covers nothing`
+      : basis === "PREVIOUS_REPORT"
+        ? inWindow.length === 0
+          ? `no records after the last record the previous report covered (seq ${fromSeq}) — this report covers nothing new`
+          : `records ${fromSeq + 1}–${toSeq} (after the last record the previous report covered, ${fromSeq})`
+        : basis === "RECORD_START"
+          ? `the whole record so far: ${inWindow.length} record(s) from seq ${firstInWindow?.seq ?? 0} to ${toSeq}`
+          : `records ${fromSeq + 1}–${toSeq}`;
 
   /* ---- order requests (requests, NOT trades) ---- */
   const orderRequests = inWindow
@@ -850,11 +906,16 @@ export function buildReport(input: BuildReportInput): ReportComplete {
         firstBreakSeq: input.chain.firstBreak?.seq ?? null,
         firstBreakLine: input.chain.firstBreak?.line ?? null,
         firstBreakReason: input.chain.firstBreak?.reason ?? null,
-        explanation:
-          "The append-only record's hash chain is the proof that no line was altered. It is BROKEN at the seq below " +
-          "because of the 2026-11-03 duplicate-writer incident (two watchers appended at once); see " +
-          "execution/INCIDENT-2026-11-03-chain-break.md. The break is explained in writing and NOT rewritten, so every " +
-          "figure after it is reported with that caveat rather than presented as verified.",
+        explanation: input.chain.ok
+          ? "The append-only record's hash chain is the proof that no line was altered, and it verifies over all " +
+            `${input.chain.recordCount} records of this record. The 2026-11-03 duplicate-writer break is NOT in this record: ` +
+            "it is in segment 1, which was archived byte-for-byte at execution/archive/orders.segment-1-2026-11-05.jsonl " +
+            "when the record was rotated on 2026-11-05 (execution/INCIDENT-2026-11-03-chain-break.md). It remains broken " +
+            "there and was not rewritten."
+          : "The append-only record's hash chain is the proof that no line was altered. It is BROKEN at the seq below " +
+            "because of the 2026-11-03 duplicate-writer incident (two watchers appended at once); see " +
+            "execution/INCIDENT-2026-11-03-chain-break.md. The break is explained in writing and NOT rewritten, so every " +
+            "figure after it is reported with that caveat rather than presented as verified.",
       },
     },
     mode: {
@@ -910,7 +971,7 @@ export function buildReport(input: BuildReportInput): ReportComplete {
       managedCount: managedBrokerClosed.length,
       realizedPLSum: brokerRealized,
       financingSum: brokerFinancing,
-      netOfFinancing: brokerRealized !== null ? Number((brokerRealized + (brokerFinancing ?? 0)).toFixed(2)) : null,
+      netOfFinancing: brokerRealized !== null ? Number((brokerRealized + (brokerFinancing ?? 0)).toFixed(6)) : null,
       trades: managedBrokerClosed,
     },
     reconciliation: {
@@ -965,7 +1026,11 @@ export function renderReportText(report: ReportJson): string {
   add();
   add(`Generated ${report.generatedAt} · trigger: ${report.trigger}${report.triggerDetail ? ` (${report.triggerDetail})` : ""}`);
   add(`Reporting window: ${report.window.description}.`);
-  add(`Built from the append-only record (${report.ledger.path}), records ${report.ledger.firstSeqInWindow ?? "–"}–${report.ledger.lastSeqInWindow ?? "–"} of ${report.ledger.recordsTotal}.`);
+  add(
+    report.ledger.firstSeqInWindow === null
+      ? `Built from the append-only record (${report.ledger.path}): no record in this window; the record holds ${report.ledger.recordsTotal}.`
+      : `Built from the append-only record (${report.ledger.path}), records ${report.ledger.firstSeqInWindow}–${report.ledger.lastSeqInWindow} of ${report.ledger.recordsTotal}.`,
+  );
   add();
   add("## What the system is doing");
   add(`Execution mode: ${report.mode.current} (source: ${report.mode.source}, read from ${report.mode.configPath}). ${report.mode.note}`);
@@ -1615,7 +1680,11 @@ export async function reportDue(
   state: ReportState,
   now: Date = new Date(),
 ): Promise<{ due: boolean; trigger: ReportTrigger; detail: string | null }> {
-  const events = records.filter((r) => r.seq > state.lastSeqSeen && REPORT_TRIGGER_KINDS.has(r.kind));
+  // The same window rule as the report itself: after a rotation the last seq the previous
+  // report covered belongs to the archived segment, and comparing it with this record's
+  // seqs found no events at all — so an event-triggered report could never fire again.
+  const { fromSeq } = resolveWindowStart(records, state.lastSeqSeen);
+  const events = records.filter((r) => r.seq > fromSeq && REPORT_TRIGGER_KINDS.has(r.kind));
   if (events.length > 0) {
     const kinds = [...new Set(events.map((e) => e.kind))];
     return {

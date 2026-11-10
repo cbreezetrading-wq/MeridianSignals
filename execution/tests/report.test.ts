@@ -26,7 +26,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createClient } from "../lib/client.ts";
 import { parseConfig, DEFAULT_REPORT_INTERVAL_HOURS } from "../lib/config.ts";
-import { buildReport, generateReport, readLatestReport, readReportState, renderReportText, reportDue, scrubAccountIds, type LedgerLike, type ReportBrokerState } from "../report.ts";
+import { buildReport, generateReport, money, readLatestReport, readReportState, renderReportText, reportDue, resolveWindowStart, scrubAccountIds, type LedgerLike, type ReportBrokerState } from "../report.ts";
 import { deliverReport, NO_TRANSPORT_DETAIL, registerTransport, resolveTransport, type NotificationTransport } from "../notify.ts";
 import { authorizeOperatorKey, handleReportAction } from "../lib/reportApi.ts";
 import { readRecords } from "../lib/record.ts";
@@ -344,6 +344,139 @@ test("a broken hash chain is stated as broken, with its seq", () => {
   assert.equal(report.ledger.chain.firstBreakSeq, 1417);
   assert.match(text, /hash chain is BROKEN at seq 1417/);
   assert.ok(report.unmeasured.some((u) => u.includes("BROKEN at seq 1417")));
+});
+
+/* ------------------------------------------------------- after the ledger rotation */
+
+/**
+ * A record as it looks after the 2026-11-05 rotation: seq numbering restarts at 1 with a
+ * `LEDGER_ROTATION` checkpoint as the first record. The seqs below are the real ones — the
+ * previous report's window came from segment 1 and ended at 2100.
+ */
+function rotatedLedger(): LedgerLike[] {
+  return [
+    { seq: 1, recordedAt: at(0), kind: "LEDGER_ROTATION", state: "SEGMENT_OPEN", payload: { segment: 2, previousSegment: { segment: 1, lastSeq: 2176 } } },
+    { seq: 2, recordedAt: at(1), kind: "ORDER_REQUESTED", orderKey: "msig-aaa", state: "REQUESTED", payload: { request: { body: { order: { type: "MARKET", instrument: "EUR_USD", units: "1" } } }, proposal: { origin: "CONNECTION_TEST" } } },
+    { seq: 3, recordedAt: at(2), kind: "FILL", orderKey: "msig-aaa", state: "FILLED", payload: { tradeId: "52", instrument: "EUR_USD", units: "1", price: "1.12180" } },
+    {
+      seq: 4,
+      recordedAt: at(3),
+      kind: "CLOSED",
+      orderKey: "msig-aaa",
+      state: "CLOSED",
+      payload: {
+        tradeId: "52",
+        instrument: "EUR_USD",
+        units: "1",
+        realizedPL: -0.0021,
+        transactionId: "9",
+        brokerResponse: { orderFillTransaction: { id: "9", pl: "-0.0021", financing: "0.0000", commission: "0.0000" } },
+      },
+    },
+  ];
+}
+
+test("a window start left over from the archived segment restarts at the LEDGER_ROTATION checkpoint", () => {
+  const report = buildReport({
+    records: rotatedLedger(),
+    broker: broker(),
+    config,
+    chain: { ok: true, recordCount: 4, firstBreak: null },
+    notification: noNotification,
+    generatedAt: at(10),
+    trigger: "SCHEDULED",
+    fromSeq: 2100,
+    windowBasis: "PREVIOUS_REPORT",
+  });
+  const text = renderReportText(report);
+
+  assert.equal(report.window.basis, "LEDGER_ROTATION");
+  assert.equal(report.window.fromSeq, 0, "the window starts at the checkpoint, which is seq 1");
+  assert.equal(report.window.toSeq, 4);
+  assert.match(report.window.description, /restarted at the LEDGER_ROTATION checkpoint, seq 1/);
+  assert.equal(report.ledger.recordsInWindow, 4, "every record of the current segment is in the window");
+  assert.equal(report.ledger.firstSeqInWindow, 1);
+  assert.equal(report.ledger.lastSeqInWindow, 4);
+
+  // The nonsense this replaced: "records 2101–4" with a window covering nothing.
+  assert.doesNotMatch(text, /2101/);
+  assert.doesNotMatch(text, /records ––– of/);
+  assert.match(text, /records 1–4 of 4/);
+  // The records that were never reported are now counted, not skipped.
+  assert.equal(report.counts.brokerConfirmedFills, 1);
+  assert.equal(report.counts.closes, 1);
+});
+
+test("a window start beyond the end of the record with no rotation is stated, not quietly re-reported", () => {
+  const report = buildReport({
+    records: ledger(),
+    broker: broker(),
+    config,
+    chain: goodChain,
+    notification: noNotification,
+    generatedAt: at(10),
+    trigger: "SCHEDULED",
+    fromSeq: 2100,
+  });
+  assert.equal(report.window.basis, "PREVIOUS_REPORT");
+  assert.equal(report.ledger.recordsInWindow, 0);
+  assert.match(report.window.description, /BEYOND the end of this record \(6\) and no LEDGER_ROTATION checkpoint explains it/);
+});
+
+test("a window with nothing new says so, instead of printing a range that runs backwards", () => {
+  const report = buildReport({ records: ledger(), broker: broker(), config, chain: goodChain, notification: noNotification, generatedAt: at(10), trigger: "SCHEDULED", fromSeq: 6 });
+  assert.equal(report.ledger.recordsInWindow, 0);
+  assert.match(report.window.description, /this report covers nothing new/);
+  const text = renderReportText(report);
+  assert.doesNotMatch(text, /records 7–6/);
+  assert.doesNotMatch(text, /records ––– of/);
+  assert.match(text, /no record in this window; the record holds 6/);
+});
+
+test("an event after a rotation makes a report due, though the previous window came from segment 1", async () => {
+  const state = { lastReportAt: at(0), lastReportId: "rpt-a", lastSeqSeen: 2100, intervalHours: 6, updatedAt: at(0) };
+  const due = await reportDue(rotatedLedger(), { reportIntervalHours: 6 }, state, new Date(Date.parse(at(0)) + 60_000));
+  assert.equal(due.due, true);
+  assert.equal(due.trigger, "EVENT");
+  assert.match(due.detail ?? "", /FILL/);
+  // And the window the report will cover is the whole current segment, not nothing.
+  assert.deepEqual(resolveWindowStart(rotatedLedger(), 2100), { fromSeq: 0, reset: { from: 2100, checkpointSeq: 1 } });
+  // Without a rotation the start is left exactly as it was.
+  assert.deepEqual(resolveWindowStart(ledger(), 3), { fromSeq: 3, reset: null });
+});
+
+test("a small non-zero amount never renders as zero", () => {
+  assert.equal(money(-0.0021), "-0.0021", "trade 52's realised P/L, which read -0.00");
+  assert.equal(money(0.0021), "0.0021");
+  assert.equal(money(0), "0.00");
+  assert.equal(money(-12.5), "-12.50");
+  assert.equal(money(-0.42), "-0.42");
+  assert.equal(money(100585.24), "100,585.24");
+  assert.equal(money(0.0001), "0.0001");
+  assert.equal(money(null), "unmeasured");
+  assert.notEqual(money(1e-9), "0.00", "even an amount below the decimal cap must not read as zero");
+
+  const report = buildReport({ records: rotatedLedger(), broker: broker(), config, chain: { ok: true, recordCount: 4, firstBreak: null }, notification: noNotification, generatedAt: at(10), trigger: "SCHEDULED" });
+  assert.match(renderReportText(report), /trade 52 EUR_USD 1 units — realised P\/L -0\.0021/);
+
+  // The broker's own totals: a net of -0.0022 must not be rounded to "0.00" either.
+  const tinyBroker = broker({
+    closedTrades: { ok: true, readAt: at(10), error: null, trades: [{ id: "52", instrument: "EUR_USD", realizedPL: "-0.0021", financing: "-0.0001", clientExtensions: { id: "msig-aaa", tag: "MERIDIAN-PRACTICE-TEST" } }] },
+  });
+  const tiny = buildReport({ records: rotatedLedger(), broker: tinyBroker, config, chain: { ok: true, recordCount: 4, firstBreak: null }, notification: noNotification, generatedAt: at(10), trigger: "SCHEDULED" });
+  assert.equal(tiny.brokerClosedTrades.netOfFinancing, -0.0022);
+  assert.match(renderReportText(tiny), /realised P\/L -0\.0021, financing -0\.0001, net -0\.0022/);
+});
+
+test("the chain explanation matches the chain's actual state", () => {
+  const ok = buildReport({ records: rotatedLedger(), broker: broker(), config, chain: { ok: true, recordCount: 4, firstBreak: null }, notification: noNotification, generatedAt: at(10), trigger: "SCHEDULED" });
+  assert.equal(ok.ledger.chain.ok, true);
+  assert.doesNotMatch(ok.ledger.chain.explanation, /BROKEN at the seq below/, "an intact chain must not carry the BROKEN explanation");
+  assert.match(ok.ledger.chain.explanation, /verifies over all 4 records/);
+  assert.match(ok.ledger.chain.explanation, /archived byte-for-byte/);
+
+  const broken = buildReport({ records: rotatedLedger(), broker: broker(), config, chain: { ok: false, recordCount: 4, firstBreak: { line: 1418, seq: 1417, reason: "seq 1417 is not the expected 1418" } }, notification: noNotification, generatedAt: at(10), trigger: "SCHEDULED" });
+  assert.match(broken.ledger.chain.explanation, /BROKEN at the seq below/);
 });
 
 test("a trade the broker closed but the record never closed is reported as a gap, not absorbed", () => {
