@@ -394,6 +394,14 @@ function Dashboard() {
             </a>
             .
           </p>
+          <p className="mt-1 text-sm text-rose-900">
+            And nine further candidates were written down in a protocol before any number was
+            computed; all nine lost to the spread too –{" "}
+            <a className="underline" href="/backtest/search">
+              pre-registered strategy search
+            </a>
+            .
+          </p>
           <p className="mt-2 text-xs text-rose-800">
             <strong className="font-semibold">
               The hourly backtest&rsquo;s headline result has been independently reproduced, trade for

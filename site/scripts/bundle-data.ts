@@ -47,7 +47,7 @@ export const SITE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 /** Where the snapshots are written, relative to the site root. */
 export const BUNDLE_DIR = "src/data/bundled";
 
-export type DataKey = "backtest" | "daily-backtest" | "signal-log";
+export type DataKey = "backtest" | "daily-backtest" | "strategy-search" | "signal-log";
 
 export type DataFileSpec = {
   key: DataKey;
@@ -75,6 +75,13 @@ export const DATA_FILES: readonly DataFileSpec[] = [
     sharedPath: "/home/team/shared/daily/results.json",
     file: "daily-results.json",
     description: "daily backtest results",
+  },
+  {
+    key: "strategy-search",
+    envVar: "STRATEGY_SEARCH_RESULTS_PATH",
+    sharedPath: "/home/team/shared/verify/strategy-search/results.json",
+    file: "strategy-search-results.json",
+    description: "pre-registered strategy search results",
   },
   {
     key: "signal-log",

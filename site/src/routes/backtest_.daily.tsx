@@ -233,6 +233,10 @@ function DailyBacktestPage() {
             ← Hourly backtest (the ruleset the dashboard runs)
           </a>
           <span className="mx-2 text-slate-400">·</span>
+          <a className="font-medium text-slate-900 underline" href="/backtest/search">
+            Pre-registered strategy search
+          </a>
+          <span className="mx-2 text-slate-400">·</span>
           <a className="font-medium text-slate-900 underline" href="/">
             Dashboard
           </a>

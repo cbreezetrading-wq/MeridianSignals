@@ -295,6 +295,12 @@ function BacktestPage() {
             held-out period is printed with a caveat next to it →
           </a>
         </p>
+        <p className="mt-2 text-sm">
+          <a className="font-semibold text-slate-900 underline" href="/backtest/search">
+            The pre-registered search: nine candidates fixed in advance, all nine losing to the
+            spread →
+          </a>
+        </p>
       </section>
 
       {/* ── four-way comparison ─────────────────────────────────────────── */}

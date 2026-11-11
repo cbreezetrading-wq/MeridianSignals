@@ -47,7 +47,7 @@ type BundleManifest = {
   entries: Partial<Record<DataKey, BundleEntry>>;
 };
 
-export type DataKey = "backtest" | "daily-backtest" | "signal-log";
+export type DataKey = "backtest" | "daily-backtest" | "strategy-search" | "signal-log";
 
 const MANIFEST = manifestJson as BundleManifest;
 
@@ -61,6 +61,11 @@ export const DATA_SOURCES: Record<DataKey, { envVar: string; sharedPath: string;
     envVar: "DAILY_BACKTEST_RESULTS_PATH",
     sharedPath: "/home/team/shared/daily/results.json",
     bundledPath: "src/data/bundled/daily-results.json",
+  },
+  "strategy-search": {
+    envVar: "STRATEGY_SEARCH_RESULTS_PATH",
+    sharedPath: "/home/team/shared/verify/strategy-search/results.json",
+    bundledPath: "src/data/bundled/strategy-search-results.json",
   },
   "signal-log": {
     envVar: "SIGNAL_LOG_PATH",
@@ -142,11 +147,13 @@ async function readBundled(
   }
   let text: string;
   try {
-    // Literal specifiers, so the bundler inlines all three at build time.
+    // Literal specifiers, so the bundler inlines all four at build time.
     if (key === "backtest") {
       text = (await import("../../data/bundled/backtest-results.json?raw")).default;
     } else if (key === "daily-backtest") {
       text = (await import("../../data/bundled/daily-results.json?raw")).default;
+    } else if (key === "strategy-search") {
+      text = (await import("../../data/bundled/strategy-search-results.json?raw")).default;
     } else {
       text = (await import("../../data/bundled/signals.jsonl?raw")).default;
     }
