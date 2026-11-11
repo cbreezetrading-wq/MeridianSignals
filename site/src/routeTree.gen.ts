@@ -13,8 +13,10 @@ import { Route as TrackRecordRouteImport } from './routes/track-record'
 import { Route as ExecutionRouteImport } from './routes/execution'
 import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as BacktestSearchRouteImport } from './routes/backtest_.search'
 import { Route as BacktestDailyRouteImport } from './routes/backtest_.daily'
 import { Route as ApiTrackRecordRouteImport } from './routes/api/track-record'
+import { Route as ApiStrategySearchRouteImport } from './routes/api/strategy-search'
 import { Route as ApiSignalsRouteImport } from './routes/api/signals'
 import { Route as ApiExecutionRouteImport } from './routes/api/execution'
 import { Route as ApiDailyBacktestRouteImport } from './routes/api/daily-backtest'
@@ -40,6 +42,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BacktestSearchRoute = BacktestSearchRouteImport.update({
+  id: '/backtest_/search',
+  path: '/backtest/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BacktestDailyRoute = BacktestDailyRouteImport.update({
   id: '/backtest_/daily',
   path: '/backtest/daily',
@@ -48,6 +55,11 @@ const BacktestDailyRoute = BacktestDailyRouteImport.update({
 const ApiTrackRecordRoute = ApiTrackRecordRouteImport.update({
   id: '/api/track-record',
   path: '/api/track-record',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStrategySearchRoute = ApiStrategySearchRouteImport.update({
+  id: '/api/strategy-search',
+  path: '/api/strategy-search',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiSignalsRoute = ApiSignalsRouteImport.update({
@@ -80,8 +92,10 @@ export interface FileRoutesByFullPath {
   '/api/daily-backtest': typeof ApiDailyBacktestRoute
   '/api/execution': typeof ApiExecutionRoute
   '/api/signals': typeof ApiSignalsRoute
+  '/api/strategy-search': typeof ApiStrategySearchRoute
   '/api/track-record': typeof ApiTrackRecordRoute
   '/backtest/daily': typeof BacktestDailyRoute
+  '/backtest/search': typeof BacktestSearchRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -92,8 +106,10 @@ export interface FileRoutesByTo {
   '/api/daily-backtest': typeof ApiDailyBacktestRoute
   '/api/execution': typeof ApiExecutionRoute
   '/api/signals': typeof ApiSignalsRoute
+  '/api/strategy-search': typeof ApiStrategySearchRoute
   '/api/track-record': typeof ApiTrackRecordRoute
   '/backtest/daily': typeof BacktestDailyRoute
+  '/backtest/search': typeof BacktestSearchRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -105,8 +121,10 @@ export interface FileRoutesById {
   '/api/daily-backtest': typeof ApiDailyBacktestRoute
   '/api/execution': typeof ApiExecutionRoute
   '/api/signals': typeof ApiSignalsRoute
+  '/api/strategy-search': typeof ApiStrategySearchRoute
   '/api/track-record': typeof ApiTrackRecordRoute
   '/backtest_/daily': typeof BacktestDailyRoute
+  '/backtest_/search': typeof BacktestSearchRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -119,8 +137,10 @@ export interface FileRouteTypes {
     | '/api/daily-backtest'
     | '/api/execution'
     | '/api/signals'
+    | '/api/strategy-search'
     | '/api/track-record'
     | '/backtest/daily'
+    | '/backtest/search'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -131,8 +151,10 @@ export interface FileRouteTypes {
     | '/api/daily-backtest'
     | '/api/execution'
     | '/api/signals'
+    | '/api/strategy-search'
     | '/api/track-record'
     | '/backtest/daily'
+    | '/backtest/search'
   id:
     | '__root__'
     | '/'
@@ -143,8 +165,10 @@ export interface FileRouteTypes {
     | '/api/daily-backtest'
     | '/api/execution'
     | '/api/signals'
+    | '/api/strategy-search'
     | '/api/track-record'
     | '/backtest_/daily'
+    | '/backtest_/search'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -156,8 +180,10 @@ export interface RootRouteChildren {
   ApiDailyBacktestRoute: typeof ApiDailyBacktestRoute
   ApiExecutionRoute: typeof ApiExecutionRoute
   ApiSignalsRoute: typeof ApiSignalsRoute
+  ApiStrategySearchRoute: typeof ApiStrategySearchRoute
   ApiTrackRecordRoute: typeof ApiTrackRecordRoute
   BacktestDailyRoute: typeof BacktestDailyRoute
+  BacktestSearchRoute: typeof BacktestSearchRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -190,6 +216,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/backtest_/search': {
+      id: '/backtest_/search'
+      path: '/backtest/search'
+      fullPath: '/backtest/search'
+      preLoaderRoute: typeof BacktestSearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/backtest_/daily': {
       id: '/backtest_/daily'
       path: '/backtest/daily'
@@ -202,6 +235,13 @@ declare module '@tanstack/react-router' {
       path: '/api/track-record'
       fullPath: '/api/track-record'
       preLoaderRoute: typeof ApiTrackRecordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/strategy-search': {
+      id: '/api/strategy-search'
+      path: '/api/strategy-search'
+      fullPath: '/api/strategy-search'
+      preLoaderRoute: typeof ApiStrategySearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/signals': {
@@ -244,8 +284,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDailyBacktestRoute: ApiDailyBacktestRoute,
   ApiExecutionRoute: ApiExecutionRoute,
   ApiSignalsRoute: ApiSignalsRoute,
+  ApiStrategySearchRoute: ApiStrategySearchRoute,
   ApiTrackRecordRoute: ApiTrackRecordRoute,
   BacktestDailyRoute: BacktestDailyRoute,
+  BacktestSearchRoute: BacktestSearchRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

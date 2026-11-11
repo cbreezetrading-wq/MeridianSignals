@@ -32,8 +32,16 @@ function Sha({ sha }: { sha: string }) {
   );
 }
 
+/** The JSON endpoint that serves the same file, per data key. */
+const API_PATH: Partial<Record<Provenance["key"], string>> = {
+  backtest: "/api/backtest",
+  "daily-backtest": "/api/daily-backtest",
+  "strategy-search": "/api/strategy-search",
+};
+
 export function ProvenanceLine({ provenance, what }: { provenance: Provenance; what: string }) {
   const { origin, bundled } = provenance;
+  const apiPath = API_PATH[provenance.key];
 
   return (
     <p className="mt-2 max-w-3xl text-xs leading-relaxed text-slate-500">
@@ -47,12 +55,13 @@ export function ProvenanceLine({ provenance, what }: { provenance: Provenance; w
           owner&rsquo;s machine, so it serves that dated copy; no figure was re-typed or recalculated
           to produce this page. The same answer, with the full manifest entry, is available as JSON
           from{" "}
-          <a
-            className="underline"
-            href={provenance.key === "daily-backtest" ? "/api/daily-backtest" : "/api/backtest"}
-          >
-            {provenance.key === "daily-backtest" ? "/api/daily-backtest" : "/api/backtest"}
-          </a>
+          {apiPath ? (
+            <a className="underline" href={apiPath}>
+              {apiPath}
+            </a>
+          ) : (
+            "this deployment's data endpoint"
+          )}
           .
         </>
       ) : (
