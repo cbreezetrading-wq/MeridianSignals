@@ -163,6 +163,12 @@ export type ReportClose = {
   brokerConfirmed: boolean;
   recordedAt: string;
   reason: string | null;
+  /**
+   * Whether this report's window covers the record. Closes are collected from the whole
+   * record — a close recorded once must not become a "gap" in every later report — so this
+   * says which of them this window actually saw.
+   */
+  inWindow: boolean;
 };
 
 export type ReportRefusal = {
@@ -275,6 +281,8 @@ export type ReportComplete = {
     brokerConfirmedFills: number;
     partialFills: number;
     closes: number;
+    /** How many of `closes` this report's window covers; the rest were recorded earlier. */
+    closesInWindow: number;
     /** Closes in the record that carry a broker fill transaction (P/L is broker-confirmed). */
     closesBrokerConfirmed: number;
     refusals: number;
@@ -604,7 +612,16 @@ export function buildReport(input: BuildReportInput): ReportComplete {
   // record kind that names one — FILL, PROTECTED and RECONCILIATION included.
 
   /* ---- closes ---- */
-  const closeRecords = inWindow.filter((r) => r.kind === "CLOSED");
+  //
+  // Closes are collected from the WHOLE record, not only from this window. A close the
+  // watcher records (a stop that filled while the machine was down, observed at the broker
+  // on the next start — lib/closes.ts) lands in one window; every later window would
+  // otherwise say "closes recorded: 0" beside a trade the broker reports closed, and would
+  // list that trade as a gap in our record. `inWindow` keeps the two claims apart: the
+  // count of closes is the record's, and how many of them this window covers is stated
+  // separately.
+  const windowSeqs = new Set(inWindow.map((r) => r.seq));
+  const closeRecords = records.filter((r) => r.kind === "CLOSED");
   const closes: ReportClose[] = [];
   const closeRecordDuplicates: Array<{ seq: number; tradeId: string | null; ofSeq: number | null; why: string }> = [];
   const byTrade = new Map<string, LedgerLike[]>();
@@ -636,12 +653,16 @@ export function buildReport(input: BuildReportInput): ReportComplete {
       instrument: str(pp.instrument ?? pp.trade?.instrument),
       units: str(pp.units ?? pp.trade?.currentUnits),
       realizedPL: num(pp.realizedPL ?? tx.pl),
-      financing: num(tx.financing),
+      // The close's own recorded financing wins. A closing fill transaction reports the
+      // financing settled at that instant (0.0000 for trade 59), while the trade carries the
+      // financing it accrued (-0.0001); a close recorded by the watcher states the latter.
+      financing: num(pp.financing ?? tx.financing),
       commission: num(tx.commission),
       transactionId: str(pp.transactionId ?? tx.id),
       brokerConfirmed: str(pp.transactionId ?? tx.id) !== null && num(pp.realizedPL ?? tx.pl) !== null,
       recordedAt: primary.recordedAt,
       reason: str(pp.reason ?? pp.control),
+      inWindow: windowSeqs.has(primary.seq),
     });
     for (const r of group) {
       if (r.seq === primary.seq) continue;
@@ -671,6 +692,7 @@ export function buildReport(input: BuildReportInput): ReportComplete {
       brokerConfirmed: false,
       recordedAt: r.recordedAt,
       reason: str(p.reason ?? p.control),
+      inWindow: windowSeqs.has(r.seq),
     });
   }
   closes.sort((a, b) => a.seq - b.seq);
@@ -782,7 +804,10 @@ export function buildReport(input: BuildReportInput): ReportComplete {
 
   /* ---- record vs broker: say what is missing rather than smoothing it over ---- */
   const brokerClosedIds = new Set(managedBrokerClosed.map((t) => t.tradeId));
-  const recordClosedIds = new Set(closes.filter((c) => c.brokerConfirmed && c.tradeId).map((c) => c.tradeId!));
+  // "The record holds a close for this trade" is a different question from "its P/L is
+  // broker-confirmed": a close recorded with the broker's read unavailable still closes the
+  // gap, and is listed under `unmeasured` rather than as a missing event.
+  const recordClosedIds = new Set(closes.filter((c) => c.tradeId).map((c) => c.tradeId!));
   const closedAtBrokerNotInRecord = closedMeasured
     ? managedBrokerClosed
         .filter((t) => !recordClosedIds.has(t.tradeId))
@@ -935,6 +960,8 @@ export function buildReport(input: BuildReportInput): ReportComplete {
       brokerConfirmedFills: fills.filter((f) => f.kind === "FILL").length,
       partialFills: fills.filter((f) => f.kind === "PARTIAL_FILL").length,
       closes: closes.length,
+      /** How many of `closes` this report's window covers. The rest are the record's. */
+      closesInWindow: closes.filter((c) => c.inWindow).length,
       closesBrokerConfirmed: confirmedCloses.length,
       refusals: refusals.length,
       errors: errors.length,
@@ -1064,11 +1091,11 @@ export function renderReportText(report: ReportJson): string {
   }
   for (const u of report.unconfirmedFillRecords) add(`  · seq ${u.seq}: NOT counted as a fill — ${u.reason}`);
   add(
-    `Closes recorded: ${report.counts.closes} (${report.counts.closesBrokerConfirmed} of them carry a broker fill transaction, so their P/L is the broker's)${report.sources.closes.length ? ` (records ${report.sources.closes.join(", ")})` : ""}.`,
+    `Closes recorded: ${report.counts.closes} in the record${report.counts.closesInWindow === report.counts.closes ? "" : `, ${report.counts.closesInWindow} of them in this window`} (${report.counts.closesBrokerConfirmed} of them carry a broker fill transaction, so their P/L is the broker's)${report.sources.closes.length ? ` (records ${report.sources.closes.join(", ")})` : ""}.`,
   );
   for (const c of report.closes) {
     add(
-      `  · seq ${c.seq}: trade ${c.tradeId ?? "?"} ${c.instrument ?? ""} ${c.units ?? ""} units — realised P/L ${money(c.realizedPL)}, financing ${c.financing === null ? "unmeasured" : money(c.financing)}, commission ${c.commission === null ? "unmeasured" : money(c.commission)}${c.brokerConfirmed ? "" : " (no broker fill transaction in the record)"}.`,
+      `  · seq ${c.seq}: trade ${c.tradeId ?? "?"} ${c.instrument ?? ""} ${c.units ?? ""} units — realised P/L ${money(c.realizedPL)}, financing ${c.financing === null ? "unmeasured" : money(c.financing)}, commission ${c.commission === null ? "unmeasured" : money(c.commission)}${c.brokerConfirmed ? "" : " (no broker fill transaction in the record)"}${c.inWindow ? "" : " (recorded in an earlier window)"}.`,
     );
   }
   for (const d of report.closeRecordDuplicates) add(`  · seq ${d.seq} (trade ${d.tradeId ?? "?"}): ${d.why}`);

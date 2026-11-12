@@ -11,6 +11,7 @@ import { redactDeep } from "./lib/client.ts";
 import { generateReport, reportDue, readReportState, readLatestReportResult, subjectStamp } from "./report.ts";
 import { createEmailTransport, readEmailEnv, missingEnvDetail } from "./emailTransport.ts";
 import { instructionsFromSignals } from "./lib/signalAdapter.ts";
+import { recordObservedCloses, WATCHER_CYCLE_MS } from "./lib/closes.ts";
 import type { SignalInstruction } from "./lib/instruction.ts";
 import type { SignalsPayload } from "../site/src/lib/market/types.ts";
 
@@ -138,6 +139,33 @@ Approval mode requires preview + submit. Nothing in this build trades live.`);
           const current = await loadConfigFromDisk();
           const settings = resolveSettings(current);
           if (current.problems.length) throw new Error(current.problems.join("; "));
+          // FIRST THING EVERY CYCLE, INCLUDING THE FIRST CYCLE AFTER A RESTART: record any
+          // close the broker has already made that the record has not seen. A stop or target
+          // that fills while the machine is down is invisible to the order path, so without
+          // this the record would never hold that close. It is read-only at the broker, it
+          // writes at most one CLOSED per trade id ever, and it runs BEFORE anything can be
+          // submitted. Its own try/catch: a detection that cannot run must not stop the
+          // watcher, and must never be mistaken for a trading failure.
+          let closeInfo: unknown = null;
+          try {
+            const detected = await recordObservedCloses(client, { cycleMs: WATCHER_CYCLE_MS });
+            closeInfo = {
+              ok: detected.ok,
+              ...(detected.ok ? {} : { reason: detected.reason }),
+              recorded: detected.recorded.map((c) => ({
+                tradeId: c.tradeId,
+                closedAt: c.closedAt,
+                detectedAt: c.detectedAt,
+                detectedLate: c.detectedLate,
+                realizedPL: c.realizedPL,
+                plMeasured: c.plMeasured,
+              })),
+              skipped: detected.skipped,
+            };
+            if (detected.recorded.length > 0) console.log(JSON.stringify({ closes: "RECORDED", ...(closeInfo as object) }));
+          } catch (closeError) {
+            closeInfo = { state: "CLOSE_DETECTION_FAILED", error: String(closeError) };
+          }
           const response = await fetch(url, { signal: AbortSignal.timeout(15000), redirect: "error" });
           if (!response.ok) throw new Error(`Signals source HTTP ${response.status}`);
           const payload = await response.json() as SignalsPayload;
@@ -170,7 +198,7 @@ Approval mode requires preview + submit. Nothing in this build trades live.`);
             reportInfo = { state: "REPORT_FAILED", error: String(reportError) };
             console.log(JSON.stringify({ report: "FAILED", error: String(reportError) }));
           }
-          output({ checkedAt: status.generatedAt, mode: current.mode, brokerOk: status.broker.ok, pending: instructions.length, report: reportInfo });
+          output({ checkedAt: status.generatedAt, mode: current.mode, brokerOk: status.broker.ok, pending: instructions.length, closes: closeInfo, report: reportInfo });
         } catch (error) {
           // Stop rather than retry uncertain orders or hide a failed source.
           output({ state: "UNAVAILABLE", error: String(error) });

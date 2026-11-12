@@ -191,10 +191,45 @@ export type AppendInput = {
  *    derivation, the hash and the append — everything that must not interleave.
  */
 export async function appendRecord(input: AppendInput, path = recordPath()): Promise<ExecutionRecord> {
-  const run = async (): Promise<ExecutionRecord> => {
+  const outcome = await appendLocked(input, path, null);
+  if (!outcome.appended) throw new Error(`appendRecord was refused: ${outcome.skippedBecause}`);
+  return outcome.record;
+}
+
+export type GuardedAppendResult =
+  | { appended: true; record: ExecutionRecord }
+  | { appended: false; skippedBecause: string };
+
+/**
+ * Append one record UNLESS `guard` says the record already says what this append would say.
+ *
+ * The guard runs INSIDE the same exclusive lock that derives the seq and the hash, against
+ * the record as it stands at that moment — so two processes racing to record the same event
+ * cannot both win, and a restart cannot append what a previous run already appended. That
+ * is what makes "one CLOSED record per trade id, ever" a property of the file rather than a
+ * hope about timing. See lib/closes.ts.
+ */
+export async function appendRecordUnless(
+  input: AppendInput,
+  guard: (existing: ExecutionRecord[]) => string | null,
+  path = recordPath(),
+): Promise<GuardedAppendResult> {
+  return appendLocked(input, path, guard);
+}
+
+async function appendLocked(
+  input: AppendInput,
+  path: string,
+  guard: ((existing: ExecutionRecord[]) => string | null) | null,
+): Promise<GuardedAppendResult> {
+  const run = async (): Promise<GuardedAppendResult> => {
     await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
     return withLedgerLock(`${path}.lock`, async () => {
       const existing = await readRecords(path);
+      if (guard) {
+        const skippedBecause = guard(existing);
+        if (skippedBecause !== null) return { appended: false as const, skippedBecause };
+      }
       const last = existing[existing.length - 1];
       const seq = (last?.seq ?? 0) + 1;
       const prevHash = last?.hash ?? GENESIS_PREV_HASH;
@@ -218,7 +253,7 @@ export async function appendRecord(input: AppendInput, path = recordPath()): Pro
         throw new Error("REFUSED to append: the credential appears in the serialised record.");
       }
       await appendFile(path, line, { encoding: "utf8", flag: "a" });
-      return record;
+      return { appended: true as const, record };
     });
   };
   const chained = writeLock.then(run, run);
