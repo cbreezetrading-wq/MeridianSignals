@@ -490,7 +490,127 @@ test("a trade the broker closed but the record never closed is reported as a gap
   assert.deepEqual(report.reconciliation.enteredAtBrokerWithoutFillRecord.sort(), ["333"], "trade 111 does have a FILL record; 333 does not");
   assert.ok(report.unmeasured.some((u) => u.includes("NO close record in the append-only record")));
   assert.match(text, /Gap in OUR record: 2 closed trade\(s\)/);
-  assert.match(text, /NO FILL record in our record: 333/);
+  assert.match(text, /NO FILL record in this segment of our record: 333/);
+});
+
+/* ------------------------------------------- after a rotation: what it carried */
+
+/**
+ * The record as it really looks after the 2026-11-05 rotation, with the trades the checkpoint
+ * carried: 5, 15, 25, 33 and 43 were Meridian's own, closed at the broker before the cutover, and
+ * their FILL/PROTECTED/CLOSED records are in the archived segment 1. The checkpoint's
+ * `knownTradeIds` lists only 5, 15 and 33 — it is built from FILL records, and 25 and 43 were
+ * opened with their fill recorded as RETRY_DECISION + PROTECTED — so 25 and 43 are named only by
+ * their carried order key. That is the live checkpoint's shape, reproduced.
+ */
+function rotatedLedgerWithCarriedTrades(): LedgerLike[] {
+  const records = rotatedLedger();
+  records[0] = {
+    seq: 1,
+    recordedAt: at(0),
+    kind: "LEDGER_ROTATION",
+    state: "SEGMENT_OPEN",
+    payload: {
+      segment: 2,
+      previousSegment: { segment: 1, lastSeq: 2176 },
+      carriedForward: {
+        knownTradeIds: ["5", "15", "33"],
+        orderKeys: [
+          { orderKey: "msig-old-5", tradeId: "5", state: "CLOSED" },
+          { orderKey: "msig-old-15", tradeId: "15", state: "CLOSED" },
+          { orderKey: "msig-old-25", tradeId: "25", state: "CLOSED" },
+          { orderKey: "msig-old-33", tradeId: "33", state: "CLOSED" },
+          { orderKey: "msig-old-43", tradeId: "43", state: "PROTECTED" },
+        ],
+        realisedByDay: { "2026-10-30": -110.9262 },
+        sources: [],
+      },
+    },
+  };
+  return records;
+}
+
+/** The broker's closed history as it stood after the cutover: the five carried trades and 52. */
+function brokerWithCarriedTrades(): ReportBrokerState {
+  return broker({
+    account: { currency: "USD", nav: 100585.2354, balance: 100585.2354, unrealizedPL: 0, openTradeCount: 0 },
+    openTrades: [],
+    closedTrades: {
+      ok: true,
+      readAt: at(10),
+      error: null,
+      trades: [
+        { id: "43", instrument: "GBP_USD", realizedPL: "670.52", financing: "-5.99" },
+        { id: "33", instrument: "EUR_USD", realizedPL: "-16.69", financing: "0.00" },
+        { id: "25", instrument: "GBP_USD", realizedPL: "-34.29", financing: "0.00" },
+        { id: "15", instrument: "EUR_USD", realizedPL: "-14.95", financing: "0.00" },
+        { id: "5", instrument: "EUR_USD", realizedPL: "-13.36", financing: "0.00" },
+        { id: "52", instrument: "EUR_USD", realizedPL: "-0.0021", financing: "-0.0001", clientExtensions: { id: "msig-aaa", tag: "MERIDIAN-PRACTICE-TEST" } },
+      ],
+    },
+  });
+}
+
+test("Meridian's trades from before the rotation are still counted, and named as carried", () => {
+  const report = buildReport({
+    records: rotatedLedgerWithCarriedTrades(),
+    broker: brokerWithCarriedTrades(),
+    config,
+    chain: { ok: true, recordCount: 4, firstBreak: null },
+    notification: noNotification,
+    generatedAt: at(10),
+    trigger: "SCHEDULED",
+  });
+  const text = renderReportText(report);
+
+  // The five trades exist nowhere in this segment except in the checkpoint. They are still
+  // Meridian's, so all six closed trades count — not just the one this segment opened.
+  assert.equal(report.brokerClosedTrades.managedCount, 6);
+  assert.equal(report.brokerClosedTrades.realizedPLSum!.toFixed(4), "591.2279");
+  assert.equal(report.brokerClosedTrades.netOfFinancing!.toFixed(4), "585.2378");
+  assert.match(text, /6 Meridian closed trade\(s\) at the broker/);
+  assert.doesNotMatch(text, /Nothing in this report is unmeasured/);
+
+  // The report says where the five came from, so the count going back up is not mistaken for
+  // five new trades.
+  assert.deepEqual(report.reconciliation.carriedAcrossRotation, { checkpointSeq: 1, tradeIds: ["5", "15", "25", "33", "43"] });
+  assert.match(text, /5 of those 6 are Meridian's own from before the ledger rotation \(5, 15, 25, 33, 43\)/);
+  assert.match(text, /a rotation is not a repair/);
+
+  // The gap is back, with each trade's broker P/L, and listed as unmeasured.
+  assert.deepEqual(report.reconciliation.closedAtBrokerNotInRecord.map((t) => t.tradeId).sort(), ["15", "25", "33", "43", "5"]);
+  assert.match(text, /Gap in OUR record: 5 closed trade\(s\)/);
+  assert.ok(report.unmeasured.some((u) => u.includes("5 trade(s) the broker reports closed have NO close record")));
+});
+
+test("the implied opening balance reads 100,000 again once the carried trades are counted", () => {
+  const build = (records: LedgerLike[]) =>
+    buildReport({
+      records,
+      broker: brokerWithCarriedTrades(),
+      config,
+      chain: { ok: true, recordCount: 4, firstBreak: null },
+      notification: noNotification,
+      generatedAt: at(10),
+      trigger: "SCHEDULED",
+    });
+
+  // With the seed: every trade the broker knows about is subtracted, so the account's implied
+  // opening balance is the 100,000 it started with.
+  const fixed = build(rotatedLedgerWithCarriedTrades());
+  assert.equal(fixed.reconciliation.impliedOpeningBalance, 100000);
+  assert.match(renderReportText(fixed), /implied opening balance of the account/);
+  assert.match(renderReportText(fixed), /100,000\.00/);
+
+  // Without it — the same record with the checkpoint's carriedForward removed, which is the state
+  // the report was in before this fix — only trade 52 is Meridian's, so the balance looks like it
+  // was never touched and the five missing trades read as profit the account never made.
+  const unseeded = rotatedLedger();
+  const before = build(unseeded);
+  assert.equal(before.reconciliation.carriedAcrossRotation, null);
+  assert.equal(before.brokerClosedTrades.managedCount, 1);
+  assert.notEqual(before.reconciliation.impliedOpeningBalance, 100000);
+  assert.equal(before.reconciliation.impliedOpeningBalance, 100585.24);
 });
 
 /* ------------------------------------------------------------------ notification */
