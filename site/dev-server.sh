@@ -33,10 +33,13 @@ SUPERVISOR="${MERIDIAN_SUPERVISOR:-/home/team/shared/execution/install-superviso
 PORT="${PORT:-3000}"
 
 if [ -x "$SUPERVISOR" ]; then
-  # --no-entrypoint: the boot hook in /entrypoint.sh is image-level and does not survive a
-  # restart, so this path must not depend on being able to rewrite it.
+  # --no-entrypoint used to be passed here, so the hook in /entrypoint.sh was never refreshed
+  # by the only path that runs — and when the platform rebuilt that file from the image
+  # (mtime 2026-11-18T13:39Z) the boot hook was simply gone: at the 2026-11-19T00:01:30Z boot
+  # nothing started the worker or the site. Passing --boot alone asks the installer to refresh
+  # the hook best-effort; it never depends on being able to, and a failure is not fatal.
   echo "[dev-server] $(date -u +%FT%TZ) checking the worker supervisor (idempotent; starts nothing if one is running)"
-  "$SUPERVISOR" --boot --no-entrypoint ||
+  "$SUPERVISOR" --boot ||
     echo "[dev-server] $(date -u +%FT%TZ) worker supervisor not started; serving the site anyway" >&2
 fi
 

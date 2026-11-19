@@ -17,6 +17,11 @@
 #     parent process and left alone.
 #  4. Starts the supervisor now if nothing is running, detached (setsid) so it outlives the
 #     terminal or session that started it.
+#  5. Ensures watchdog.sh is running (execution/watchdog.sh, added 2026-11-19). The supervisor
+#     restarts its watcher child, but nothing restarted the supervisor: the 2026-11-13 →
+#     2026-11-19 outage ended only because the site's start path was invoked by hand. The
+#     watchdog re-runs this installer every 30s while the machine is up, so a supervisor that
+#     disappears comes back by itself. It starts nothing directly and holds its own lock.
 #
 # Safe to run any number of times: it starts nothing twice, and re-writing the entrypoint
 # hook is a no-op once the block is current. Nothing here submits orders — submission is
@@ -150,6 +155,24 @@ stop_orphan_watchers() {
   [ "$stopped" = "0" ] || say "stopped $stopped orphan watcher(s)"
 }
 
+# ---------------------------------------------------------------- 2b. the watchdog
+# run-watcher.sh restarts its watcher child; NOTHING restarted run-watcher.sh. Between
+# 2026-11-13T10:57Z and 2026-11-19 the machine itself was not running, and when it came back
+# the worker only returned because the site's start path was invoked by hand. watchdog.sh is
+# the rung below the supervisor: while the machine is up it re-runs this installer every
+# interval, so a supervisor that disappears comes back on its own. It starts nothing itself
+# and holds its own lock, so calling this on every path (boot hook, site start, a manual run)
+# can never produce a second supervisor, a second watchdog or a second writer.
+ensure_watchdog() {
+  local wd="$EXEC_DIR/watchdog.sh"
+  [ -x "$wd" ] || return 0
+  if pgrep -f "execution/watchdog[.]sh" >/dev/null 2>&1; then return 0; fi
+  # 8>&- 9>&-: the watchdog must not inherit this installer's lock fds, or the lock outlives
+  # the process that took it.
+  setsid nohup "$wd" >> "$EXEC_DIR/.run/watchdog.log" 2>&1 8>&- 9>&- &
+  [ "$BOOT" = "1" ] || say "watchdog started (pid $!); it re-runs this installer every 30s"
+}
+
 # ---------------------------------------------------------------- 3. already running?
 # One installer at a time: two starts landing together (the managed dev-server wrapper
 # restarts `bun run dev`, and the entrypoint hook can fire in the same window) must not both
@@ -168,12 +191,14 @@ if [ -f "$PIDFILE" ]; then
   pid="$(cat "$PIDFILE" 2>/dev/null || true)"
   if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
     [ "$BOOT" = "1" ] || say "supervisor already running (pid $pid); nothing to start"
+    ensure_watchdog
     exit 0
   fi
 fi
 # A supervisor started before this script existed has no pidfile; find it by name.
 if pgrep -f "run-watcher[.]sh" >/dev/null 2>&1; then
   [ "$BOOT" = "1" ] || say "supervisor already running (no pidfile); nothing to start"
+  ensure_watchdog
   exit 0
 fi
 
@@ -189,3 +214,4 @@ else
   say "supervisor FAILED to stay up (pid $pid exited); see $OUTLOG"
   exit 1
 fi
+ensure_watchdog
