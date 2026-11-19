@@ -343,6 +343,14 @@ export type ReportComplete = {
     enteredAtBrokerWithoutFillRecord: string[];
     /** Trades the record closed that the broker does not list as closed. */
     closedInRecordNotAtBroker: Array<{ tradeId: string; seq: number }>;
+    /**
+     * Meridian's own trades that THIS segment names only through the `LEDGER_ROTATION` checkpoint's
+     * `carriedForward`, and that the broker reports closed. They are counted in the closed-trade
+     * figures above, and this is where the report says so: their records live in the archived
+     * segment, and a rotation is not a repair. Null when no checkpoint carried a trade this
+     * segment does not otherwise name.
+     */
+    carriedAcrossRotation: { checkpointSeq: number; tradeIds: string[] } | null;
     /** Implied account opening balance: balance − (realised P/L + financing). */
     impliedOpeningBalance: number | null;
     note: string;
@@ -486,6 +494,57 @@ export function resolveWindowStart(
   const checkpoint = records.find((r) => r.kind === "LEDGER_ROTATION");
   if (!checkpoint) return { fromSeq: requestedFromSeq, reset: null };
   return { fromSeq: checkpoint.seq - 1, reset: { from: requestedFromSeq, checkpointSeq: checkpoint.seq } };
+}
+
+/** Trade ids are numeric strings at OANDA; sort them as numbers, and anything else by name. */
+const byTradeId = (a: string, b: string): number => {
+  const na = Number(a);
+  const nb = Number(b);
+  return Number.isFinite(na) && Number.isFinite(nb) ? na - nb : a.localeCompare(b);
+};
+
+/**
+ * The trade ids the record carried across a ledger rotation, and the checkpoint that says so.
+ *
+ * THE ROTATION PROBLEM, PART TWO. The 2026-11-05 rotation archived segment 1 and opened segment 2
+ * at seq 1. A trade Meridian opened before the cutover has no FILL, PROTECTED or CLOSED record in
+ * this segment at all — only the checkpoint that names it. Building the managed set from the
+ * current segment alone therefore stopped counting trades 5, 15, 25, 33 and 43, and the report
+ * went from "5 Meridian closed trade(s), net 585.24" to "2 ... net -0.004" while the broker still
+ * held all seven. A rotation is not a repair: what the archive holds is still Meridian's, and the
+ * implied opening balance only reads 100,000 when every one of those trades is counted.
+ *
+ * Both parts of `carriedForward` are read. `knownTradeIds` alone is not enough: the checkpoint
+ * builds it from FILL records only, so the two trades whose fill was recorded as RETRY_DECISION +
+ * PROTECTED (25 and 43) are named by their carried order key and by nothing else. The union is what
+ * `reconcileSegment` already treats as the record's trade ids. Only the LAST checkpoint counts:
+ * each one carries everything before it, so reading them all would list nothing twice but would
+ * also let a stale checkpoint speak for a newer one.
+ */
+export function carriedTradeIdsFromRotation(records: LedgerLike[]): { checkpointSeq: number; tradeIds: string[] } | null {
+  let latest: { checkpointSeq: number; tradeIds: string[] } | null = null;
+  for (const r of records) {
+    if (r.kind !== "LEDGER_ROTATION") continue;
+    const carried = payloadOf(r).carriedForward as { knownTradeIds?: unknown; orderKeys?: unknown } | null | undefined;
+    if (!carried || typeof carried !== "object") continue;
+    const ids = new Set<string>();
+    if (Array.isArray(carried.knownTradeIds)) {
+      for (const id of carried.knownTradeIds) {
+        const s = str(id);
+        if (s) ids.add(s);
+      }
+    }
+    if (Array.isArray(carried.orderKeys)) {
+      for (const k of carried.orderKeys) {
+        const s = str((k as { tradeId?: unknown } | null)?.tradeId);
+        if (s) ids.add(s);
+      }
+    }
+    // Sorted so the report reads "5, 15, 25, 33, 43" rather than in whatever order the two
+    // carried lists happened to be built: the same checkpoint must always print the same list.
+    latest = { checkpointSeq: r.seq, tradeIds: [...ids].sort(byTradeId) };
+  }
+  return latest;
 }
 
 /**
@@ -740,24 +799,29 @@ export function buildReport(input: BuildReportInput): ReportComplete {
   const cancellations = inWindow.filter((r) => r.kind === "CANCELLED").length;
 
   /* ---- trade ids the record believes are Meridian's ---- */
-  const knownTradeIds = new Set<string>();
+  // The ids THIS segment's records name. On its own this is not the whole record: see
+  // carriedTradeIdsFromRotation below — after a cutover, Meridian's earlier trades are named only
+  // by the checkpoint, and reading this segment alone silently stopped counting them.
+  const namedByThisSegment = new Set<string>();
   for (const r of records) {
     const p = payloadOf(r);
     if (r.kind === "FILL" || r.kind === "PARTIAL_FILL") {
       const id = str(p.tradeId ?? p.tradeOpened?.tradeID);
-      if (id) knownTradeIds.add(id);
+      if (id) namedByThisSegment.add(id);
     }
     if (r.kind === "PROTECTED") {
       const id = str(p.trade?.id ?? p.tradeId);
-      if (id) knownTradeIds.add(id);
+      if (id) namedByThisSegment.add(id);
     }
     if (r.kind === "RECONCILIATION") {
       for (const m of p.matched ?? []) {
         const id = str(m?.tradeId);
-        if (id) knownTradeIds.add(id);
+        if (id) namedByThisSegment.add(id);
       }
     }
   }
+  const rotation = carriedTradeIdsFromRotation(records);
+  const knownTradeIds = new Set<string>([...namedByThisSegment, ...(rotation?.tradeIds ?? [])]);
   const isManagedTrade = (t: { id?: string; clientExtensions?: { id?: string; tag?: string } | null; stopLossOrder?: any; takeProfitOrder?: any }): boolean => {
     if (t.clientExtensions?.tag === MERIDIAN_TAG && typeof t.clientExtensions.id === "string") return true;
     for (const leg of [t.stopLossOrder, t.takeProfitOrder]) {
@@ -804,6 +868,11 @@ export function buildReport(input: BuildReportInput): ReportComplete {
 
   /* ---- record vs broker: say what is missing rather than smoothing it over ---- */
   const brokerClosedIds = new Set(managedBrokerClosed.map((t) => t.tradeId));
+  // Which of Meridian's closed trades this segment knows about ONLY because the rotation checkpoint
+  // carried them: those are the ones the report must own up to counting from the archive.
+  const carriedOnly = rotation
+    ? rotation.tradeIds.filter((id) => !namedByThisSegment.has(id) && brokerClosedIds.has(id))
+    : [];
   // "The record holds a close for this trade" is a different question from "its P/L is
   // broker-confirmed": a close recorded with the broker's read unavailable still closes the
   // gap, and is listed under `unmeasured` rather than as a missing event.
@@ -1005,6 +1074,7 @@ export function buildReport(input: BuildReportInput): ReportComplete {
       closedAtBrokerNotInRecord,
       enteredAtBrokerWithoutFillRecord,
       closedInRecordNotAtBroker,
+      carriedAcrossRotation: rotation && carriedOnly.length ? { checkpointSeq: rotation.checkpointSeq, tradeIds: carriedOnly } : null,
       impliedOpeningBalance,
       note:
         "Broker wins. A trade the broker reports closed that the record never recorded is listed as a gap in the record, with the broker's own P/L. " +
@@ -1082,8 +1152,9 @@ export function renderReportText(report: ReportJson): string {
   add(`Fills confirmed by the broker: ${report.counts.brokerConfirmedFills + report.counts.partialFills}${report.sources.fills.length ? ` (records ${report.sources.fills.join(", ")})` : ""}.`);
   if (report.reconciliation.enteredAtBrokerWithoutFillRecord.length) {
     add(
-      `  · The broker reports these closed trades with NO FILL record in our record: ${report.reconciliation.enteredAtBrokerWithoutFillRecord.join(", ")}. ` +
-        "Their entry was recorded as RETRY_DECISION/PROTECTED after a dropped response, so the fill count above is lower than the number of trades that actually existed.",
+      `  · The broker reports these closed trades with NO FILL record in this segment of our record: ${report.reconciliation.enteredAtBrokerWithoutFillRecord.join(", ")}. ` +
+        "Either the entry was recorded as RETRY_DECISION/PROTECTED after a dropped response, or the entry records are in the segment archived at the rotation, " +
+        "so the fill count above is lower than the number of trades that actually existed.",
     );
   }
   for (const f of report.fills) {
@@ -1132,6 +1203,14 @@ export function renderReportText(report: ReportJson): string {
     for (const t of report.brokerClosedTrades.trades) {
       add(`  · trade ${t.tradeId} ${t.instrument}: realised P/L ${money(t.realizedPL)}, financing ${money(t.financing)}${t.closeTime ? `, closed ${t.closeTime}` : ""}.`);
     }
+  }
+  const carriedAcross = report.reconciliation.carriedAcrossRotation;
+  if (carriedAcross) {
+    add(
+      `  · ${carriedAcross.tradeIds.length} of those ${report.brokerClosedTrades.managedCount} are Meridian's own from before the ledger rotation (${carriedAcross.tradeIds.join(", ")}): ` +
+        `the record names them only through the LEDGER_ROTATION checkpoint at seq ${carriedAcross.checkpointSeq}, which carried them out of the archived segment, ` +
+        "so they are still counted — a rotation is not a repair.",
+    );
   }
   if (report.reconciliation.impliedOpeningBalance !== null) {
     add(`Balance minus (realised P/L + financing) = ${money(report.reconciliation.impliedOpeningBalance)} — the implied opening balance of the account.`);
