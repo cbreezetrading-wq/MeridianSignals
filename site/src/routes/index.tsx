@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { isPublishedHost } from "~/lib/hostRole";
 import { getSignals } from "~/lib/market/service";
 import type { PairSignal, PairSignalOk, SignalsPayload } from "~/lib/market/types";
 
@@ -363,7 +364,11 @@ function Dashboard() {
           Meridian Signals
         </p>
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">FX signal dashboard</h1>
-        <a href="/execution" className="mt-3 inline-block text-sm underline">Open private Practice execution console →</a>
+        {/* The console is working-host-only (owner decision 2026-11-01): a published build
+            404s that path, so the public page does not link to it. */}
+        {!isPublishedHost() && (
+          <a href="/execution" className="mt-3 inline-block text-sm underline">Open private Practice execution console →</a>
+        )}
         <p className="mt-3 max-w-3xl text-sm text-slate-700">
           One ruleset, applied to four major pairs, on hourly bars from the owner&rsquo;s own broker
           account. Each pair shows the current state, the reference entry, stop and target, the bar

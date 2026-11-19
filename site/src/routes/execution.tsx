@@ -1,7 +1,21 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, notFound } from "@tanstack/react-router";
 import { useState } from "react";
 
-export const Route = createFileRoute("/execution")({ component: Execution });
+import { isPublishedHost } from "~/lib/hostRole";
+
+/**
+ * The console exists only on the working host. The published build has no ledger, no
+ * config and no operator key, so this page has nothing to show there — and the owner's
+ * decision (2026-11-01) plus `execution/UNLISTED_REQUIREMENT.md` keep it off the public
+ * port. A published build answers 404 for this path, server-side and on client
+ * navigation alike; the working host serves it as before.
+ */
+export const Route = createFileRoute("/execution")({
+  beforeLoad: () => {
+    if (isPublishedHost()) throw notFound();
+  },
+  component: Execution,
+});
 
 /** Where a risk setting's value came from. DEMO TEST is its own label, never shown as OWNER. */
 function SourceBadge({ source }: { source: string }) {
