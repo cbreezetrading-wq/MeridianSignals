@@ -74,7 +74,7 @@ function Execution() {
     <section className="rounded border p-4" aria-labelledby="report-heading">
       <h2 id="report-heading" className="text-xl font-semibold">Execution report</h2>
       <p className="mt-1 text-sm text-slate-700">A plain-language digest of what the system did: orders submitted, fills the broker confirmed, closes with their P/L and financing, refusals with the reason, errors, open positions and their stops, the active mode, and the account NAV. Every figure names the record id it came from; anything that could not be measured is labelled unmeasured. An order request is never shown as a trade.</p>
-      <p className="mt-2 text-sm text-slate-700">The watcher generates one on its interval and immediately after any fill, close, refusal or error. <strong>No notification channel is configured, so a generated report is stored here and on the server and nothing is sent anywhere.</strong></p>
+      <p className="mt-2 text-sm text-slate-700">The watcher generates one on its interval and immediately after any fill, close, refusal or error. <strong>Whether a report was delivered is stated on the report itself: the channel, the mail server's own acceptance code, and the attempt count. A report never claims delivery on "we tried".</strong></p>
       <div className="mt-3 flex flex-wrap gap-3">
         <button disabled={busy || !key} className={button} onClick={() => action("report")}>Show latest report</button>
         <button disabled={busy || !key} className={button} onClick={() => action("generate-report")}>Generate now</button>
